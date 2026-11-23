@@ -15,6 +15,9 @@ import net.minecraft.util.Mth;
 public abstract class HudElement extends Module {
 	public final NumberSetting scale = add(new NumberSetting("scale", 1.0, 0.5, 2.0, 0.1, "x"));
 
+	/** HUD 위치 편집 화면이 요소를 그리는 동안 true. 평소에는 비어 있는 요소도 이때는 예시 내용을 보여 준다. */
+	private static boolean editing;
+
 	private final double defaultAnchorX;
 	private final double defaultAnchorY;
 	private double anchorX;
@@ -26,6 +29,19 @@ public abstract class HudElement extends Module {
 		this.defaultAnchorY = anchorY;
 		this.anchorX = anchorX;
 		this.anchorY = anchorY;
+	}
+
+	public static boolean isEditing() {
+		return editing;
+	}
+
+	public static void setEditing(boolean value) {
+		editing = value;
+	}
+
+	/** 지금 보여 줄 내용이 있는지. 콤보처럼 평소에는 숨는 요소가 재정의한다. */
+	public boolean hasContent(Minecraft minecraft) {
+		return true;
 	}
 
 	/** 배율 적용 전의 내용 크기. */

@@ -21,8 +21,8 @@ public class KeystrokesHud extends HudElement {
 	public final ColorSetting textColor = add(new ColorSetting("text_color", 0xFFFFFFFF));
 	public final ColorSetting pressedColor = add(new ColorSetting("keys_pressed_color", 0xFFFFFFFF));
 
-	public KeystrokesHud() {
-		super("keystrokes", true, 0.005, 0.45);
+	public KeystrokesHud(double anchorX, double anchorY) {
+		super("keystrokes", true, anchorX, anchorY);
 	}
 
 	@Override

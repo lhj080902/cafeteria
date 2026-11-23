@@ -51,7 +51,7 @@ public class FreelookModule extends Module {
 		}
 
 		if (!isEnabled() || minecraft.player == null) {
-			drain(key);
+			KeyState.clearClicks(key);
 			stop(minecraft);
 			return;
 		}
@@ -61,24 +61,18 @@ public class FreelookModule extends Module {
 		if (mode.is("toggle")) {
 			wanted = active;
 
-			while (key.consumeClick()) {
+			while (KeyState.consumeClick(key)) {
 				wanted = !wanted;
 			}
 		} else {
 			wanted = KeyState.isHeld(key);
-			drain(key);
+			KeyState.clearClicks(key);
 		}
 
 		if (wanted) {
 			start(minecraft);
 		} else {
 			stop(minecraft);
-		}
-	}
-
-	private static void drain(KeyMapping key) {
-		while (key.consumeClick()) {
-			// 쌓여 있는 클릭을 비워서 나중에 한꺼번에 처리되지 않게 한다.
 		}
 	}
 

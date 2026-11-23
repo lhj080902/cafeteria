@@ -7,20 +7,28 @@ import io.github.lhj080902.cafeteria.gui.CafeteriaScreen;
 import io.github.lhj080902.cafeteria.gui.HudEditScreen;
 import io.github.lhj080902.cafeteria.gui.ModuleSettingsScreen;
 import io.github.lhj080902.cafeteria.hud.ClickTracker;
+import io.github.lhj080902.cafeteria.hud.CombatTracker;
+import io.github.lhj080902.cafeteria.hud.HudElement;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.CameraType;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.ChatScreen;
+import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
+import org.lwjgl.glfw.GLFW;
 
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * 실제 클라이언트를 띄워서 Cafeteria 모듈이 게임 안에서 동작하는지 확인한다.
@@ -45,13 +53,19 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			input.moveCursor(1.0, 0.0);
 			context.waitTicks(2);
 
+			logKeyConflicts(context);
 			testWindowTitle(context);
+			testTutorialOff(context);
 			testHitbox(context);
 			testZoom(context, input);
 			testFreelook(context, input);
-			testClicksPerSecond(context, input);
+			testCombat(context, input);
+			testStatusHuds(context, server);
+			testKeysWorkDespiteConflicts(context, input);
 			testScreens(context, input);
-			testFullbright(context, server);
+			testHudEditor(context, input);
+			testFullbright(context, input, server);
+			testLowFire(context, server);
 			testConfig(context);
 		}
 
@@ -175,15 +189,139 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.waitTicks(3);
 	}
 
-	private static void testClicksPerSecond(ClientGameTestContext context, TestInput input) {
+	/** 다른 키 설정과 같은 키를 쓰는 Cafeteria 키가 있으면 기록해 둔다 (실패로 보지는 않는다). */
+	private static void logKeyConflicts(ClientGameTestContext context) {
+		context.runOnClient(minecraft -> {
+			for (KeyMapping mine : List.of(CafeteriaClient.menuKey, CafeteriaClient.freelookKey, CafeteriaClient.zoomKey, CafeteriaClient.fullbrightKey)) {
+				for (KeyMapping other : minecraft.options.keyMappings) {
+					if (other != mine && !other.isUnbound() && other.same(mine)) {
+						CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 키 겹침 {} ↔ {} ({})", mine.getName(), other.getName(), mine.getTranslatedKeyMessage().getString());
+					}
+				}
+			}
+		});
+	}
+
+	private static void testTutorialOff(ClientGameTestContext context) {
+		context.runOnClient(minecraft -> minecraft.getTutorial().setStep(TutorialSteps.MOVEMENT));
+		context.waitTicks(2);
+		check(context.computeOnClient(minecraft -> minecraft.options.tutorialStep) == TutorialSteps.NONE, "튜토리얼이 자동으로 꺼지지 않았습니다");
+
+		// 모듈을 끄면 더 이상 건드리지 않는다.
+		context.runOnClient(minecraft -> {
+			Modules.NO_TUTORIAL.setEnabled(false);
+			minecraft.getTutorial().setStep(TutorialSteps.MOVEMENT);
+		});
+		context.waitTicks(2);
+		check(context.computeOnClient(minecraft -> minecraft.options.tutorialStep) == TutorialSteps.MOVEMENT, "모듈을 껐는데도 튜토리얼 단계를 바꿨습니다");
+		context.runOnClient(minecraft -> Modules.NO_TUTORIAL.setEnabled(true));
+		context.waitTicks(2);
+	}
+
+	/** 주민을 때려서 CPS, 콤보, 리치를 확인한다. */
+	private static void testCombat(ClientGameTestContext context, TestInput input) {
+		context.runOnClient(minecraft -> {
+			Modules.COMBO.setEnabled(true);
+			Modules.REACH.setEnabled(true);
+		});
+		check(!context.computeOnClient(Modules.COMBO::hasContent), "아직 때리지 않았는데 콤보가 표시됩니다");
+		check(!context.computeOnClient(Modules.REACH::hasContent), "아직 때리지 않았는데 리치가 표시됩니다");
+
 		for (int i = 0; i < 5; i++) {
 			input.pressMouse(0);
 		}
 
 		int cps = context.computeOnClient(minecraft -> ClickTracker.cps(ClickTracker.LEFT));
 		check(cps == 5, "왼쪽 클릭 5번이 CPS 5로 세어지지 않았습니다: " + cps);
-		// 방금 맞은 주민의 히트박스가 피격 색(빨강)으로 바뀐 모습을 남긴다.
-		context.takeScreenshot("hitbox-hurt-and-cps");
+		context.waitTicks(3);
+		int combo = context.computeOnClient(minecraft -> CombatTracker.combo());
+		double reach = context.computeOnClient(minecraft -> CombatTracker.reach());
+		// 무적 시간 때문에 5번 눌러도 전부 들어가지는 않는다. 최소 한 번은 적중해야 한다.
+		check(combo >= 1 && combo <= 5, "주민을 때렸는데 콤보가 올바르지 않습니다: " + combo);
+		check(reach > 1.0 && reach < 4.5, "리치 값이 이상합니다: " + reach);
+		// 방금 맞은 주민의 히트박스가 피격 색(빨강)으로 바뀐 모습과 콤보·리치 표시를 남긴다.
+		context.takeScreenshot("hitbox-hurt-and-combat-hud");
+
+		// 한동안 맞히지 않으면 콤보가 끊기고 리치 표시도 사라진다.
+		context.waitTicks(70);
+		check(context.computeOnClient(minecraft -> CombatTracker.combo()) == 0, "시간이 지나도 콤보가 끊기지 않았습니다");
+		check(context.computeOnClient(minecraft -> CombatTracker.reach()) < 0.0, "시간이 지나도 리치 표시가 남아 있습니다");
+
+		// 내가 맞으면 콤보가 끊긴다.
+		input.pressMouse(0);
+		context.waitTicks(3);
+		check(context.computeOnClient(minecraft -> CombatTracker.combo()) == 1, "다시 때렸는데 콤보가 1이 아닙니다");
+		context.runOnClient(minecraft -> minecraft.player.hurtTime = 10);
+		context.waitTicks(2);
+		check(context.computeOnClient(minecraft -> CombatTracker.combo()) == 0, "내가 맞았는데 콤보가 끊기지 않았습니다");
+
+		context.runOnClient(minecraft -> {
+			Modules.COMBO.setEnabled(false);
+			Modules.REACH.setEnabled(false);
+		});
+	}
+
+	/** 좌표, 갑옷, 포션 HUD. */
+	private static void testStatusHuds(ClientGameTestContext context, TestServerContext server) {
+		context.runOnClient(minecraft -> Modules.COORDINATES.setEnabled(true));
+		check(!context.computeOnClient(Modules.ARMOR::hasContent), "아무것도 입지 않았는데 갑옷 HUD 가 표시됩니다");
+		check(!context.computeOnClient(Modules.POTIONS::hasContent), "효과가 없는데 포션 HUD 가 표시됩니다");
+
+		server.runCommand("item replace entity @a armor.head with minecraft:diamond_helmet");
+		server.runCommand("item replace entity @a armor.chest with minecraft:iron_chestplate[damage=200]");
+		server.runCommand("item replace entity @a armor.feet with minecraft:golden_boots[damage=85]");
+		server.runCommand("item replace entity @a weapon.mainhand with minecraft:diamond_sword");
+		server.runCommand("effect give @a minecraft:speed 90 1");
+		server.runCommand("effect give @a minecraft:strength 45 0");
+		context.waitTicks(5);
+		check(context.computeOnClient(Modules.ARMOR::hasContent), "갑옷을 입었는데 갑옷 HUD 가 비어 있습니다");
+		check(context.computeOnClient(Modules.POTIONS::hasContent), "효과가 있는데 포션 HUD 가 비어 있습니다");
+		// 손에 든 아이템 표시를 끄면 한 줄이 줄어든다.
+		int withHand = context.computeOnClient(Modules.ARMOR::height);
+		context.runOnClient(minecraft -> Modules.ARMOR.mainHand.set(false));
+		int withoutHand = context.computeOnClient(Modules.ARMOR::height);
+		check(withHand - withoutHand == 17, "손에 든 아이템 줄 높이가 예상과 다릅니다: " + withHand + " → " + withoutHand);
+		context.runOnClient(minecraft -> Modules.ARMOR.mainHand.set(true));
+		context.takeScreenshot("status-huds");
+
+		server.runCommand("effect clear @a");
+		server.runCommand("item replace entity @a weapon.mainhand with minecraft:air");
+		context.runOnClient(minecraft -> Modules.COORDINATES.setEnabled(false));
+		context.waitTicks(5);
+	}
+
+	/**
+	 * 다른 키 설정이 같은 키를 차지하고 있어도 Cafeteria 키는 동작해야 한다.
+	 * (바닐라는 키 하나에 키 설정 하나만 연결하므로, 겹치면 한쪽은 눌림을 받지 못한다.)
+	 */
+	private static void testKeysWorkDespiteConflicts(ClientGameTestContext context, TestInput input) {
+		context.runOnClient(minecraft -> {
+			// 바닐라 키 두 개를 Cafeteria 메뉴 키·풀브라이트 키와 같은 키로 바꿔 놓는다.
+			minecraft.options.keySocialInteractions.setKey(KeyBindingHelper.getBoundKeyOf(CafeteriaClient.menuKey));
+			minecraft.options.keyAdvancements.setKey(KeyBindingHelper.getBoundKeyOf(CafeteriaClient.fullbrightKey));
+			KeyMapping.resetMapping();
+		});
+
+		input.pressKey(KeyBindingHelper.getBoundKeyOf(CafeteriaClient.fullbrightKey));
+		context.waitTicks(2);
+		check(Modules.FULLBRIGHT.isEnabled(), "키가 겹친 상태에서 풀브라이트 키가 동작하지 않았습니다");
+		// 같은 키를 쓰는 바닐라 화면(발전 과제)이 같이 열렸을 수 있으므로 닫고 다시 누른다.
+		context.setScreen(() -> null);
+		input.pressKey(KeyBindingHelper.getBoundKeyOf(CafeteriaClient.fullbrightKey));
+		context.waitTicks(2);
+		check(!Modules.FULLBRIGHT.isEnabled(), "키가 겹친 상태에서 풀브라이트 키를 다시 눌러도 꺼지지 않았습니다");
+		context.setScreen(() -> null);
+
+		input.pressKey(KeyBindingHelper.getBoundKeyOf(CafeteriaClient.menuKey));
+		context.waitTicks(3);
+		context.waitForScreen(CafeteriaScreen.class);
+		context.setScreen(() -> null);
+
+		context.runOnClient(minecraft -> {
+			minecraft.options.keySocialInteractions.setKey(minecraft.options.keySocialInteractions.getDefaultKey());
+			minecraft.options.keyAdvancements.setKey(minecraft.options.keyAdvancements.getDefaultKey());
+			KeyMapping.resetMapping();
+		});
 	}
 
 	private static void testScreens(ClientGameTestContext context, TestInput input) {
@@ -205,6 +343,16 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		input.pressKey(CafeteriaClient.menuKey);
 		context.waitForScreen(CafeteriaScreen.class);
 		context.takeScreenshot("menu");
+
+		// 목록이 화면보다 길므로 아래로 굴려서 마지막 카드(리치)까지 보이는지 확인한다.
+		int last = Modules.ALL.size() - 1;
+		int before = context.computeOnClient(minecraft -> ((CafeteriaScreen) minecraft.screen).cardY(last));
+		context.runOnClient(minecraft -> minecraft.screen.mouseScrolled(100, 100, 0, -50));
+		int after = context.computeOnClient(minecraft -> ((CafeteriaScreen) minecraft.screen).cardY(last));
+		int screenHeight = context.computeOnClient(minecraft -> minecraft.screen.height);
+		check(after < before && after + 35 <= screenHeight - 6 - 30, "메뉴를 끝까지 내려도 마지막 카드가 보이지 않습니다: " + before + " → " + after);
+		context.takeScreenshot("menu-scrolled");
+		context.runOnClient(minecraft -> minecraft.screen.mouseScrolled(100, 100, 0, 50));
 
 		// 첫 번째 카드(프리룩)의 위치와 스위치 위치
 		int[] card = context.computeOnClient(minecraft -> {
@@ -232,34 +380,187 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.setScreen(() -> new ModuleSettingsScreen(null, Modules.KEYSTROKES));
 		context.takeScreenshot("settings-keystrokes");
 
-		context.setScreen(() -> new HudEditScreen(null));
-		context.takeScreenshot("hud-edit");
-		context.runOnClient(minecraft -> {
-			int x = Modules.FPS.x(minecraft, minecraft.screen.width);
-			int y = Modules.FPS.y(minecraft, minecraft.screen.height);
-			minecraft.screen.mouseClicked(x + 3, y + 3, 0);
-			minecraft.screen.mouseDragged(203, 83, 0, 0, 0);
-			minecraft.screen.mouseReleased(203, 83, 0);
-		});
-		int[] moved = context.computeOnClient(minecraft -> new int[] {
-			Modules.FPS.x(minecraft, minecraft.screen.width), Modules.FPS.y(minecraft, minecraft.screen.height)
-		});
-		check(Math.abs(moved[0] - 200) <= 1 && Math.abs(moved[1] - 80) <= 1, "HUD 드래그 위치가 다릅니다: " + moved[0] + ", " + moved[1]);
-		context.takeScreenshot("hud-edit-moved");
-		context.clickScreenButton("cafeteria.hud_edit.reset");
-		context.clickScreenButton("gui.done");
+		context.setScreen(() -> null);
 		context.waitFor(minecraft -> minecraft.screen == null);
 	}
 
-	private static void testFullbright(ClientGameTestContext context, TestServerContext server) {
+	private static int[] position(ClientGameTestContext context, HudElement element) {
+		return context.computeOnClient(minecraft -> new int[] {
+			element.x(minecraft, minecraft.getWindow().getGuiScaledWidth()), element.y(minecraft, minecraft.getWindow().getGuiScaledHeight())
+		});
+	}
+
+	/** HUD 위치 편집: 끌기, Shift 맞춤, 방향키 세밀 조정, 휠 크기 조절, 우클릭 설정. */
+	private static void testHudEditor(ClientGameTestContext context, TestInput input) {
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(true);
+				element.resetPosition();
+			}
+		});
+		context.setScreen(() -> new HudEditScreen(null));
+		// 편집 화면에서는 비어 있는 요소(콤보, 리치, 포션)도 예시 내용으로 보여야 한다.
+		check(context.computeOnClient(minecraft -> Modules.COMBO.hasContent(minecraft) || HudElement.isEditing()), "편집 화면에서 편집 상태가 켜지지 않았습니다");
+		context.takeScreenshot("hud-edit");
+
+		int screenWidth = context.computeOnClient(minecraft -> minecraft.screen.width);
+		int screenHeight = context.computeOnClient(minecraft -> minecraft.screen.height);
+		int fpsWidth = context.computeOnClient(Modules.FPS::width);
+		int fpsHeight = context.computeOnClient(Modules.FPS::height);
+
+		// 1) 그냥 끌면 놓은 자리에 그대로 간다.
+		int[] start = position(context, Modules.FPS);
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(start[0] + 3, start[1] + 3, 0);
+			minecraft.screen.mouseDragged(203, 83, 0, 0, 0);
+			minecraft.screen.mouseReleased(203, 83, 0);
+		});
+		int[] moved = position(context, Modules.FPS);
+		check(moved[0] == 200 && moved[1] == 80, "HUD 드래그 위치가 다릅니다: " + moved[0] + ", " + moved[1]);
+
+		// 2) 방향키: 1픽셀, Shift 와 함께면 10픽셀.
+		input.pressKey(GLFW.GLFW_KEY_RIGHT);
+		input.pressKey(GLFW.GLFW_KEY_DOWN);
+		int[] nudged = position(context, Modules.FPS);
+		check(nudged[0] == 201 && nudged[1] == 81, "방향키로 1픽셀 이동하지 않았습니다: " + nudged[0] + ", " + nudged[1]);
+		input.holdShift();
+		input.pressKey(GLFW.GLFW_KEY_LEFT);
+		input.pressKey(GLFW.GLFW_KEY_UP);
+		input.releaseShift();
+		int[] jumped = position(context, Modules.FPS);
+		check(jumped[0] == 191 && jumped[1] == 71, "Shift+방향키로 10픽셀 이동하지 않았습니다: " + jumped[0] + ", " + jumped[1]);
+
+		// 맞춤 검사는 가장 가까운 안내선에 붙는지를 보는 것이라, 기준이 분명하도록 FPS 와 CPS 만 남긴다.
+		// CPS 는 화면 가운데 안내선과 헷갈리지 않는 곳(왼쪽 위)에 고정해 둔다. 기본 위치는 미니맵 모드 유무에 따라 달라진다.
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.FPS || element == Modules.CPS);
+			}
+
+			Modules.CPS.setPosition(minecraft, 20, 30, minecraft.screen.width, minecraft.screen.height);
+		});
+
+		// 3) Shift 없이 화면 가운데 근처로 끌면 붙지 않는다.
+		int centerX = (int) Math.round(screenWidth / 2.0 - fpsWidth / 2.0);
+		int centerY = (int) Math.round(screenHeight / 2.0 - fpsHeight / 2.0);
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(jumped[0] + 3, jumped[1] + 3, 0);
+			minecraft.screen.mouseDragged(centerX + 4 + 3, centerY - 4 + 3, 0, 0, 0);
+			minecraft.screen.mouseReleased(centerX + 4 + 3, centerY - 4 + 3, 0);
+		});
+		int[] free = position(context, Modules.FPS);
+		check(free[0] == centerX + 4 && free[1] == centerY - 4, "Shift 를 누르지 않았는데 위치가 바뀌었습니다: " + free[0] + ", " + free[1]);
+
+		// 4) Shift 를 누른 채 끌면 화면 가운데 안내선에 붙는다.
+		input.holdShift();
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(free[0] + 3, free[1] + 3, 0);
+			minecraft.screen.mouseDragged(free[0] + 3 - 1, free[1] + 3 + 1, 0, 0, 0);
+		});
+		context.takeScreenshot("hud-edit-snap-center");
+		context.runOnClient(minecraft -> minecraft.screen.mouseReleased(free[0] + 2, free[1] + 4, 0));
+		int[] snapped = position(context, Modules.FPS);
+		check(snapped[0] == centerX && snapped[1] == centerY, "화면 가운데에 붙지 않았습니다: " + snapped[0] + ", " + snapped[1] + " (기대 " + centerX + ", " + centerY + ")");
+
+		// 5) Shift 를 누른 채 다른 요소(CPS) 근처로 끌면 그 요소의 왼쪽 가장자리와 아래쪽에 붙는다.
+		int[] cps = position(context, Modules.CPS);
+		int cpsHeight = context.computeOnClient(Modules.CPS::height);
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(snapped[0] + 3, snapped[1] + 3, 0);
+			minecraft.screen.mouseDragged(cps[0] + 4 + 3, cps[1] + cpsHeight + 5 + 3, 0, 0, 0);
+			minecraft.screen.mouseReleased(cps[0] + 4 + 3, cps[1] + cpsHeight + 5 + 3, 0);
+		});
+		input.releaseShift();
+		int[] aligned = position(context, Modules.FPS);
+		check(aligned[0] == cps[0] && aligned[1] == cps[1] + cpsHeight, "다른 요소에 맞춰 붙지 않았습니다: " + aligned[0] + ", " + aligned[1]);
+
+		// 6) 화면 밖으로 끌어도 화면 안에 머문다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(aligned[0] + 3, aligned[1] + 3, 0);
+			minecraft.screen.mouseDragged(-500, 9999, 0, 0, 0);
+			minecraft.screen.mouseReleased(-500, 9999, 0);
+		});
+		int[] clamped = position(context, Modules.FPS);
+		check(clamped[0] == 0 && clamped[1] == screenHeight - fpsHeight, "화면 밖으로 나갔습니다: " + clamped[0] + ", " + clamped[1]);
+
+		// 7) 휠: 크기 조절 (왼쪽 위 모서리는 제자리).
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(clamped[0] + 3, clamped[1] + 3, 0);
+			minecraft.screen.mouseDragged(150 + 3, 60 + 3, 0, 0, 0);
+			minecraft.screen.mouseReleased(150 + 3, 60 + 3, 0);
+			minecraft.screen.mouseScrolled(153, 63, 0, 1);
+			minecraft.screen.mouseScrolled(153, 63, 0, 1);
+		});
+		check(near(Modules.FPS.scale.get(), 1.2), "휠로 크기가 바뀌지 않았습니다: " + Modules.FPS.scale.get());
+		int[] scaled = position(context, Modules.FPS);
+		check(scaled[0] == 150 && scaled[1] == 60, "크기를 바꾸면서 위치가 움직였습니다: " + scaled[0] + ", " + scaled[1]);
+		check(context.computeOnClient(Modules.FPS::width) > fpsWidth, "크기를 키웠는데 폭이 그대로입니다");
+		context.takeScreenshot("hud-edit-selected-scaled");
+
+		// 8) 우클릭: 그 요소의 설정 화면이 열리고, 완료하면 편집 화면으로 돌아온다.
+		context.runOnClient(minecraft -> minecraft.screen.mouseClicked(153, 63, 1));
+		context.waitForScreen(ModuleSettingsScreen.class);
+		context.clickScreenButton("gui.done");
+		context.waitForScreen(HudEditScreen.class);
+
+		context.clickScreenButton("cafeteria.hud_edit.reset");
+		context.runOnClient(minecraft -> Modules.FPS.scale.reset());
+		int[] reset = position(context, Modules.FPS);
+		check(reset[0] == start[0] && reset[1] == start[1], "위치 초기화 후 원래 자리가 아닙니다: " + reset[0] + ", " + reset[1]);
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		check(!context.computeOnClient(minecraft -> HudElement.isEditing()), "편집 화면을 닫았는데 편집 상태가 남아 있습니다");
+
+		// 기본 상태로 되돌린다: 좌표·콤보·리치만 꺼져 있고 나머지는 켜져 있다.
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+			}
+		});
+	}
+
+	private static void testFullbright(ClientGameTestContext context, TestInput input, TestServerContext server) {
 		server.runCommand("time set midnight");
 		context.waitTicks(40);
+		check(!Modules.FULLBRIGHT.isEnabled(), "풀브라이트는 기본으로 꺼져 있어야 합니다");
 		context.takeScreenshot("night-normal");
-		context.runOnClient(minecraft -> Modules.FULLBRIGHT.setEnabled(true));
+
+		// 단축키로 켜고 끈다.
+		input.pressKey(CafeteriaClient.fullbrightKey);
 		context.waitTicks(10);
+		check(Modules.FULLBRIGHT.isEnabled(), "풀브라이트 단축키로 켜지지 않았습니다");
 		context.takeScreenshot("night-fullbright");
-		context.runOnClient(minecraft -> Modules.FULLBRIGHT.setEnabled(false));
+		input.pressKey(CafeteriaClient.fullbrightKey);
+		context.waitTicks(2);
+		check(!Modules.FULLBRIGHT.isEnabled(), "풀브라이트 단축키로 꺼지지 않았습니다");
+
+		// 채팅창 같은 화면이 열려 있을 때 누른 키는 무시한다.
+		context.setScreen(() -> new ChatScreen(""));
+		input.pressKey(CafeteriaClient.fullbrightKey);
+		context.waitTicks(2);
+		context.setScreen(() -> null);
+		context.waitTicks(2);
+		check(!Modules.FULLBRIGHT.isEnabled(), "채팅 입력 중에 누른 키로 풀브라이트가 켜졌습니다");
 		server.runCommand("time set noon");
+	}
+
+	/** 낮은 화염: 불이 붙은 상태에서 켜기 전/후 화면을 남긴다. */
+	private static void testLowFire(ClientGameTestContext context, TestServerContext server) {
+		server.runCommand("effect give @a minecraft:fire_resistance 120 0 true");
+		server.runCommand("execute at @a run setblock ~ ~ ~ minecraft:fire");
+		context.waitFor(minecraft -> minecraft.player.isOnFire(), 200);
+		context.waitTicks(5);
+		context.takeScreenshot("fire-normal");
+		context.runOnClient(minecraft -> {
+			Modules.LOW_FIRE.setEnabled(true);
+			Modules.LOW_FIRE.amount.set(100.0);
+		});
+		context.waitTicks(3);
+		context.takeScreenshot("fire-low");
+		check(near(Modules.LOW_FIRE.offset(), 0.5), "낮은 화염 100% 의 이동 거리가 다릅니다");
+		context.runOnClient(minecraft -> Modules.LOW_FIRE.setEnabled(false));
+		check(near(Modules.LOW_FIRE.offset(), 0.0), "낮은 화염을 껐는데 이동 거리가 남아 있습니다");
+		server.runCommand("execute at @a run setblock ~ ~ ~ minecraft:air");
 	}
 
 	private static void testConfig(ClientGameTestContext context) {

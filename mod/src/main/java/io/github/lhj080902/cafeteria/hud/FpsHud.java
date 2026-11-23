@@ -3,8 +3,8 @@ package io.github.lhj080902.cafeteria.hud;
 import net.minecraft.client.Minecraft;
 
 public class FpsHud extends TextHudElement {
-	public FpsHud() {
-		super("fps", true, 0.005, 0.01);
+	public FpsHud(double anchorX, double anchorY) {
+		super("fps", true, anchorX, anchorY);
 	}
 
 	@Override

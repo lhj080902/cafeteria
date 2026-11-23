@@ -2,6 +2,7 @@ package io.github.lhj080902.cafeteria.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import io.github.lhj080902.cafeteria.KeyState;
 import io.github.lhj080902.cafeteria.Modules;
 import io.github.lhj080902.cafeteria.hud.ClickTracker;
 import net.minecraft.client.Minecraft;
@@ -34,10 +35,16 @@ public abstract class MouseHandlerMixin {
 		}
 	}
 
-	/** CPS 측정: 화면(GUI)이 열려 있지 않을 때의 버튼 누름만 센다. */
+	/** 마우스 버튼에 연결한 Cafeteria 키와 CPS 측정. CPS 는 화면(GUI)이 열려 있지 않을 때의 누름만 센다. */
 	@Inject(method = "onPress", at = @At("HEAD"))
-	private void cafeteria$countClick(long window, int button, int action, int modifiers, CallbackInfo ci) {
-		if (action == 1 && window == minecraft.getWindow().getWindow() && minecraft.screen == null) {
+	private void cafeteria$trackButton(long window, int button, int action, int modifiers, CallbackInfo ci) {
+		if (window != minecraft.getWindow().getWindow()) {
+			return;
+		}
+
+		KeyState.onMouseButtonEvent(button, action);
+
+		if (action == 1 && minecraft.screen == null) {
 			ClickTracker.record(button);
 		}
 	}

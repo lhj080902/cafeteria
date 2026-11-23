@@ -13,6 +13,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Mth;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** 모듈 목록 화면 (기본 키: 오른쪽 Shift). 스위치를 누르면 켜고 끄고, 카드를 누르면 세부 설정으로 들어간다. */
 public class CafeteriaScreen extends Screen {
 	public static final int ACCENT = 0xFFF2A65A;
@@ -27,7 +30,20 @@ public class CafeteriaScreen extends Screen {
 	private static final int SWITCH_WIDTH = 24;
 	private static final int SWITCH_HEIGHT = 12;
 
+	private static final int SECTION_TITLE = 13;
+	private static final int SECTION_GAP = 8;
+
+	/** 카드 하나의 배치. top 은 목록 내용의 맨 위를 0으로 한 세로 위치. */
+	private record Card(Module module, int column, int top) {
+	}
+
+	private record SectionTitle(Component title, int top) {
+	}
+
 	private final Screen parent;
+	private final List<Card> cards = new ArrayList<>();
+	private final List<SectionTitle> sectionTitles = new ArrayList<>();
+	private int contentHeight;
 	private int panelX;
 	private int panelY;
 	private int panelWidth;
@@ -42,8 +58,9 @@ public class CafeteriaScreen extends Screen {
 
 	@Override
 	protected void init() {
+		layout();
 		panelWidth = Math.min(MAX_PANEL_WIDTH, width - 8);
-		panelHeight = Math.min(height - 12, HEADER + PADDING * 2 + contentHeight() + FOOTER);
+		panelHeight = Math.min(height - 12, HEADER + PADDING * 2 + contentHeight + FOOTER);
 		panelX = (width - panelWidth) / 2;
 		panelY = (height - panelHeight) / 2;
 		cardWidth = (panelWidth - PADDING * 2 - GAP * (COLUMNS - 1)) / COLUMNS;
@@ -55,9 +72,24 @@ public class CafeteriaScreen extends Screen {
 		scroll = Mth.clamp(scroll, 0.0, maxScroll());
 	}
 
-	private static int contentHeight() {
-		int rows = (Modules.ALL.size() + COLUMNS - 1) / COLUMNS;
-		return rows * (CARD_HEIGHT + GAP) - GAP;
+	/** 묶음 제목과 카드의 세로 위치를 계산한다. 카드 순서는 Modules.ALL 과 같다. */
+	private void layout() {
+		cards.clear();
+		sectionTitles.clear();
+		int bottom = addSection(Component.translatable("cafeteria.screen.section.features"), Modules.FEATURES, 0);
+		contentHeight = addSection(Component.translatable("cafeteria.screen.section.hud"), Modules.HUD, bottom + SECTION_GAP);
+	}
+
+	private int addSection(Component title, List<? extends Module> modules, int top) {
+		sectionTitles.add(new SectionTitle(title, top));
+		int cardsTop = top + SECTION_TITLE;
+
+		for (int i = 0; i < modules.size(); i++) {
+			cards.add(new Card(modules.get(i), i % COLUMNS, cardsTop + i / COLUMNS * (CARD_HEIGHT + GAP)));
+		}
+
+		int rows = (modules.size() + COLUMNS - 1) / COLUMNS;
+		return cardsTop + rows * (CARD_HEIGHT + GAP) - GAP;
 	}
 
 	private int listTop() {
@@ -69,15 +101,20 @@ public class CafeteriaScreen extends Screen {
 	}
 
 	private double maxScroll() {
-		return Math.max(0, contentHeight() + PADDING * 2 - (listBottom() - listTop()));
+		return Math.max(0, contentHeight + PADDING * 2 - (listBottom() - listTop()));
+	}
+
+	/** 목록 내용 기준 세로 위치를 화면 좌표로 바꾼다. */
+	private int contentY(int top) {
+		return listTop() + PADDING + top - (int) scroll;
 	}
 
 	public int cardX(int index) {
-		return panelX + PADDING + index % COLUMNS * (cardWidth + GAP);
+		return panelX + PADDING + cards.get(index).column() * (cardWidth + GAP);
 	}
 
 	public int cardY(int index) {
-		return listTop() + PADDING + index / COLUMNS * (CARD_HEIGHT + GAP) - (int) scroll;
+		return contentY(cards.get(index).top());
 	}
 
 	@Override
@@ -96,14 +133,35 @@ public class CafeteriaScreen extends Screen {
 		graphics.enableScissor(panelX, listTop(), panelX + panelWidth, listBottom());
 		boolean mouseInList = mouseY >= listTop() && mouseY < listBottom();
 
-		for (int i = 0; i < Modules.ALL.size(); i++) {
+		for (SectionTitle section : sectionTitles) {
+			graphics.drawString(font, section.title(), panelX + PADDING + 2, contentY(section.top()) + 2, ACCENT, false);
+		}
+
+		for (int i = 0; i < cards.size(); i++) {
 			int x = cardX(i);
 			int y = cardY(i);
 			boolean hovered = mouseInList && mouseX >= x && mouseX < x + cardWidth && mouseY >= y && mouseY < y + CARD_HEIGHT;
-			renderCard(graphics, Modules.ALL.get(i), x, y, hovered);
+			renderCard(graphics, cards.get(i).module(), x, y, hovered);
 		}
 
 		graphics.disableScissor();
+		renderScrollBar(graphics);
+	}
+
+	/** 목록이 화면보다 길 때 오른쪽에 현재 위치를 보여 주는 막대. */
+	private void renderScrollBar(GuiGraphics graphics) {
+		double max = maxScroll();
+
+		if (max <= 0) {
+			return;
+		}
+
+		int trackHeight = listBottom() - listTop() - 4;
+		int barHeight = Math.max(12, (int) (trackHeight * trackHeight / (trackHeight + max)));
+		int barY = listTop() + 2 + (int) ((trackHeight - barHeight) * scroll / max);
+		int x = panelX + panelWidth - 4;
+		graphics.fill(x, listTop() + 2, x + 2, listTop() + 2 + trackHeight, 0x40FFFFFF);
+		graphics.fill(x, barY, x + 2, barY + barHeight, ACCENT);
 	}
 
 	private void renderCard(GuiGraphics graphics, Module module, int x, int y, boolean hovered) {
@@ -154,7 +212,7 @@ public class CafeteriaScreen extends Screen {
 			return false;
 		}
 
-		for (int i = 0; i < Modules.ALL.size(); i++) {
+		for (int i = 0; i < cards.size(); i++) {
 			int x = cardX(i);
 			int y = cardY(i);
 
@@ -162,7 +220,7 @@ public class CafeteriaScreen extends Screen {
 				continue;
 			}
 
-			Module module = Modules.ALL.get(i);
+			Module module = cards.get(i).module();
 			// 스위치 주변(카드 오른쪽 위)을 왼쪽 클릭하면 켜고 끄기, 그 밖의 곳이나 오른쪽 클릭은 세부 설정.
 			boolean onSwitch = mouseX >= switchX(x) - 4 && mouseY < y + 6 + SWITCH_HEIGHT + 4;
 			minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));

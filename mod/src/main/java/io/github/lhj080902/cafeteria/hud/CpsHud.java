@@ -6,8 +6,8 @@ import net.minecraft.client.Minecraft;
 public class CpsHud extends TextHudElement {
 	public final BooleanSetting rightClick = add(new BooleanSetting("cps_right", true));
 
-	public CpsHud() {
-		super("cps", true, 0.005, 0.075);
+	public CpsHud(double anchorX, double anchorY) {
+		super("cps", true, anchorX, anchorY);
 	}
 
 	@Override

@@ -5,8 +5,8 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
 
 public class PingHud extends TextHudElement {
-	public PingHud() {
-		super("ping", true, 0.005, 0.14);
+	public PingHud(double anchorX, double anchorY) {
+		super("ping", true, anchorX, anchorY);
 	}
 
 	/** 서버가 탭 목록으로 알려 주는 지연 시간(ms). 싱글플레이에서는 0이다. */

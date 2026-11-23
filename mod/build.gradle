@@ -48,6 +48,11 @@ def remapGametestJar = tasks.register("remapGametestJar", net.fabricmc.loom.task
 
 tasks.register("runProductionClientGameTest", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
 	mods.from(remapGametestJar)
+
+	// 다른 모드와 함께 돌려 보는 호환성 확인용: -PextraMods=/경로/a.jar,/경로/b.jar
+	if (project.hasProperty("extraMods")) {
+		mods.from(files(project.property("extraMods").toString().split(",")))
+	}
 	jvmArgs.add("-Dfabric.client.gametest")
 	runDir = layout.buildDirectory.dir("run/productionClientGameTest")
 }

@@ -6,9 +6,11 @@
 		"CameraMixin",
 		"EntityRenderDispatcherMixin",
 		"GameRendererMixin",
+		"KeyboardHandlerMixin",
 		"LightTextureMixin",
 		"MinecraftMixin",
-		"MouseHandlerMixin"
+		"MouseHandlerMixin",
+		"ScreenEffectRendererMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

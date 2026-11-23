@@ -18,7 +18,7 @@ public final class HudRenderer {
 		}
 
 		for (HudElement element : Modules.HUD) {
-			if (element.isEnabled()) {
+			if (element.isEnabled() && element.hasContent(minecraft)) {
 				element.render(graphics, minecraft);
 			}
 		}
