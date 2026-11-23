@@ -10,12 +10,16 @@ import io.github.lhj080902.cafeteria.hud.KeystrokesHud;
 import io.github.lhj080902.cafeteria.hud.PingHud;
 import io.github.lhj080902.cafeteria.hud.PotionHud;
 import io.github.lhj080902.cafeteria.hud.ReachHud;
+import io.github.lhj080902.cafeteria.module.ChatTimeModule;
 import io.github.lhj080902.cafeteria.module.FreelookModule;
 import io.github.lhj080902.cafeteria.module.FullbrightModule;
 import io.github.lhj080902.cafeteria.module.HitboxModule;
+import io.github.lhj080902.cafeteria.module.InfiniteChatModule;
 import io.github.lhj080902.cafeteria.module.LowFireModule;
+import io.github.lhj080902.cafeteria.module.MenuBackgroundModule;
 import io.github.lhj080902.cafeteria.module.Module;
 import io.github.lhj080902.cafeteria.module.NoTutorialModule;
+import io.github.lhj080902.cafeteria.module.ScreenshotModule;
 import io.github.lhj080902.cafeteria.module.ZoomModule;
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -39,6 +43,10 @@ public final class Modules {
 	public static final FullbrightModule FULLBRIGHT = new FullbrightModule();
 	public static final LowFireModule LOW_FIRE = new LowFireModule();
 	public static final NoTutorialModule NO_TUTORIAL = new NoTutorialModule();
+	public static final MenuBackgroundModule MENU_BACKGROUND = new MenuBackgroundModule();
+	public static final ChatTimeModule CHAT_TIME = new ChatTimeModule();
+	public static final InfiniteChatModule INFINITE_CHAT = new InfiniteChatModule();
+	public static final ScreenshotModule SCREENSHOT = new ScreenshotModule();
 
 	public static final FpsHud FPS = new FpsHud(LEFT, LEFT_TOP);
 	public static final CpsHud CPS = new CpsHud(LEFT, LEFT_TOP + ROW);
@@ -51,7 +59,7 @@ public final class Modules {
 	public static final ReachHud REACH = new ReachHud(0.5, 0.68);
 
 	/** 설정 화면의 "기능" 묶음. */
-	public static final List<Module> FEATURES = List.of(FREELOOK, ZOOM, HITBOX, FULLBRIGHT, LOW_FIRE, NO_TUTORIAL);
+	public static final List<Module> FEATURES = List.of(FREELOOK, ZOOM, HITBOX, FULLBRIGHT, LOW_FIRE, NO_TUTORIAL, MENU_BACKGROUND, CHAT_TIME, INFINITE_CHAT, SCREENSHOT);
 	/** 설정 화면의 "HUD" 묶음이자 화면에 그리는 순서. */
 	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH);
 	public static final List<Module> ALL;

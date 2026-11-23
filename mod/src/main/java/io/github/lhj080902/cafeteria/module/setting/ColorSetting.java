@@ -7,7 +7,7 @@ import com.google.gson.JsonPrimitive;
 public class ColorSetting extends Setting<Integer> {
 	/** 설정 화면에서 클릭할 때마다 순서대로 바뀌는 기본 색상표. */
 	public static final int[] PALETTE = {
-		0xFFFFFFFF, 0xFFFF5555, 0xFFFFAA00, 0xFFFFFF55, 0xFF55FF55, 0xFF00AA00,
+		0xFFFFFFFF, 0xFFAAAAAA, 0xFFFF5555, 0xFFFFAA00, 0xFFFFFF55, 0xFF55FF55, 0xFF00AA00,
 		0xFF55FFFF, 0xFF5555FF, 0xFFAA55FF, 0xFFFF55FF, 0xFF000000
 	};
 

@@ -9,6 +9,7 @@ import net.minecraft.util.Mth;
 
 /**
  * 줌. 키를 누르는 동안 시야각(FOV)을 배율만큼 나눈다.
+ * 월드를 그릴 때만 적용되고 손(아이템)의 크기는 바뀌지 않는다.
  * GameRendererMixin 이 프레임마다 currentFactor() 를 호출하므로 전환 애니메이션은 실제 경과 시간 기준으로 계산한다.
  */
 public class ZoomModule extends Module {
@@ -21,6 +22,7 @@ public class ZoomModule extends Module {
 	public final BooleanSetting scrollAdjust = add(new BooleanSetting("zoom_scroll", true));
 	public final BooleanSetting reduceSensitivity = add(new BooleanSetting("zoom_sensitivity", true));
 	public final BooleanSetting cinematic = add(new BooleanSetting("zoom_cinematic", false));
+	public final BooleanSetting hideHand = add(new BooleanSetting("zoom_hide_hand", false));
 
 	private boolean zooming;
 	private double scroll = 1.0;
@@ -80,6 +82,11 @@ public class ZoomModule extends Module {
 		}
 
 		return (float) current;
+	}
+
+	/** 확대하는 동안 1인칭 손을 숨길지. */
+	public boolean hidesHand() {
+		return isEnabled() && hideHand.get() && current > 1.01;
 	}
 
 	/** 확대한 만큼 마우스 감도를 낮춰서 조준이 튀지 않게 한다. */

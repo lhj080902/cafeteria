@@ -4,13 +4,16 @@
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"CameraMixin",
+		"ChatComponentMixin",
 		"EntityRenderDispatcherMixin",
 		"GameRendererMixin",
 		"KeyboardHandlerMixin",
 		"LightTextureMixin",
 		"MinecraftMixin",
 		"MouseHandlerMixin",
-		"ScreenEffectRendererMixin"
+		"ScreenEffectRendererMixin",
+		"ScreenMixin",
+		"ScreenshotMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

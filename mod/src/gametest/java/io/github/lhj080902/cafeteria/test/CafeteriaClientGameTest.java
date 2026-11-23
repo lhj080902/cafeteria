@@ -9,6 +9,8 @@ import io.github.lhj080902.cafeteria.gui.ModuleSettingsScreen;
 import io.github.lhj080902.cafeteria.hud.ClickTracker;
 import io.github.lhj080902.cafeteria.hud.CombatTracker;
 import io.github.lhj080902.cafeteria.hud.HudElement;
+import io.github.lhj080902.cafeteria.module.ScreenshotModule;
+import io.github.lhj080902.cafeteria.util.ScreenshotClipboard;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
@@ -17,18 +19,28 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContex
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.CameraType;
+import net.minecraft.client.GuiMessage;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.gui.screens.ChatScreen;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.network.chat.Component;
 import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
 import org.lwjgl.glfw.GLFW;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 실제 클라이언트를 띄워서 Cafeteria 모듈이 게임 안에서 동작하는지 확인한다.
@@ -63,12 +75,18 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testTutorialOff(context);
 			testHitbox(context);
 			testZoom(context, input);
+			testZoomKeepsHand(context, input, server);
 			testFreelook(context, input);
 			testCombat(context, input);
 			testStatusHuds(context, server);
 			testKeysWorkDespiteConflicts(context, input);
+			testMenuBackground(context);
 			testScreens(context, input);
+			testChatTime(context);
+			testInfiniteChat(context);
+			testScreenshotCopy(context, input);
 			testHudEditor(context, input);
+			testHudBoxSelection(context, input);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
 			testConfig(context);
@@ -150,6 +168,492 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		input.scroll(-1.0);
 		context.waitTicks(2);
 		check(selectedSlot(context) != slot, "줌이 아닐 때는 휠이 평소처럼 핫바 슬롯을 바꿔야 합니다");
+	}
+
+	/**
+	 * 줌을 해도 1인칭 손(든 아이템)의 크기와 위치가 그대로인지 스크린샷의 픽셀로 확인한다.
+	 * 주변 풍경에 없는 색(자홍색 콘크리트)을 손에 들려서 그 색이 차지하는 영역을 비교한다.
+	 */
+	private static void testZoomKeepsHand(ClientGameTestContext context, TestInput input, TestServerContext server) {
+		server.runCommand("item replace entity @a weapon.mainhand with minecraft:magenta_concrete");
+		// 손 위에 겹쳐 그려지는 HUD(키스트로크 등)가 비교에 섞이지 않게 잠시 끈다.
+		List<HudElement> shown = context.computeOnClient(minecraft -> Modules.HUD.stream().filter(HudElement::isEnabled).toList());
+		context.runOnClient(minecraft -> shown.forEach(element -> element.setEnabled(false)));
+		// 아이템을 꺼내 드는 동작이 끝날 때까지 기다린다.
+		context.waitTicks(30);
+		int[] normal = magentaArea(context.takeScreenshot("hand-normal"));
+		check(normal[0] > 2000, "손에 든 블록이 화면에 보이지 않습니다: " + normal[0] + "픽셀");
+
+		input.holdKey(CafeteriaClient.zoomKey);
+		context.waitTicks(20);
+		check(near(zoomFactor(context), Modules.ZOOM.factor.get()), "줌이 걸리지 않았습니다");
+		int[] zoomed = magentaArea(context.takeScreenshot("hand-zoomed"));
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 손 영역(픽셀 수, 왼쪽, 위, 오른쪽, 아래) 평소 {} / 줌 {}", java.util.Arrays.toString(normal), java.util.Arrays.toString(zoomed));
+		check(Math.abs(zoomed[0] - normal[0]) <= normal[0] / 50, "줌을 하니 손의 크기가 바뀌었습니다: " + normal[0] + " → " + zoomed[0] + "픽셀");
+
+		for (int i = 1; i < 5; i++) {
+			check(Math.abs(zoomed[i] - normal[i]) <= 2, "줌을 하니 손의 위치가 바뀌었습니다: " + java.util.Arrays.toString(normal) + " → " + java.util.Arrays.toString(zoomed));
+		}
+
+		// "줌 중 손 숨기기"를 켜면 확대하는 동안에만 손이 사라진다.
+		context.runOnClient(minecraft -> Modules.ZOOM.hideHand.set(true));
+		context.waitTicks(3);
+		int[] hidden = magentaArea(context.takeScreenshot("hand-hidden-while-zooming"));
+		check(hidden[0] == 0, "줌 중 손 숨기기를 켰는데 손이 보입니다: " + hidden[0] + "픽셀");
+		input.releaseKey(CafeteriaClient.zoomKey);
+		context.waitTicks(20);
+		int[] back = magentaArea(context.takeScreenshot("hand-after-zoom"));
+		check(Math.abs(back[0] - normal[0]) <= normal[0] / 50, "줌을 풀었는데 손이 돌아오지 않았습니다: " + back[0] + "픽셀");
+
+		context.runOnClient(minecraft -> {
+			Modules.ZOOM.hideHand.set(false);
+			shown.forEach(element -> element.setEnabled(true));
+		});
+		server.runCommand("item replace entity @a weapon.mainhand with minecraft:air");
+		context.waitTicks(10);
+	}
+
+	private static BufferedImage readImage(Path file) {
+		try {
+			return ImageIO.read(file.toFile());
+		} catch (java.io.IOException e) {
+			throw new AssertionError("스크린샷을 읽을 수 없습니다: " + file, e);
+		}
+	}
+
+	/**
+	 * 스크린샷의 오른쪽 아래(1인칭 손이 그려지는 곳)에서 자홍색 픽셀의 개수와 그 영역(왼쪽, 위, 오른쪽, 아래)을 돌려준다.
+	 * 핫바의 아이템 그림은 화면 왼쪽 절반에 있어서 섞이지 않는다.
+	 */
+	private static int[] magentaArea(Path screenshot) {
+		BufferedImage image = readImage(screenshot);
+		int count = 0;
+		int left = Integer.MAX_VALUE;
+		int top = Integer.MAX_VALUE;
+		int right = -1;
+		int bottom = -1;
+
+		for (int y = image.getHeight() / 2; y < image.getHeight(); y++) {
+			for (int x = image.getWidth() / 2; x < image.getWidth(); x++) {
+				int rgb = image.getRGB(x, y);
+				int red = rgb >> 16 & 0xFF;
+				int green = rgb >> 8 & 0xFF;
+				int blue = rgb & 0xFF;
+
+				if (red > 70 && blue > 60 && green * 2 < red && Math.abs(red - blue) < 70) {
+					count++;
+					left = Math.min(left, x);
+					top = Math.min(top, y);
+					right = Math.max(right, x);
+					bottom = Math.max(bottom, y);
+				}
+			}
+		}
+
+		return count == 0 ? new int[] {0, 0, 0, 0, 0} : new int[] {count, left, top, right, bottom};
+	}
+
+	/**
+	 * 스크린샷 왼쪽 가장자리 아래쪽 영역의 평균 밝기와 선명도(옆 픽셀과의 밝기 차이 평균)를 잰다.
+	 * 메뉴 배경이 얼마나 어두워졌는지, 흐려졌는지를 숫자로 비교하는 데 쓴다.
+	 */
+	private static double[] brightnessAndSharpness(Path screenshot) {
+		BufferedImage image = readImage(screenshot);
+		// 모드 설정 화면의 패널이 가리지 않는 왼쪽 가장자리만 본다.
+		int fromX = 4;
+		int toX = 40;
+		int fromY = image.getHeight() * 55 / 100;
+		int toY = image.getHeight() * 90 / 100;
+		double brightness = 0.0;
+		double sharpness = 0.0;
+		int count = 0;
+
+		for (int y = fromY; y < toY; y++) {
+			for (int x = fromX; x < toX; x++) {
+				double here = luminance(image.getRGB(x, y));
+				brightness += here;
+				sharpness += Math.abs(here - luminance(image.getRGB(x + 1, y)));
+				count++;
+			}
+		}
+
+		return new double[] {brightness / count, sharpness / count};
+	}
+
+	private static double luminance(int rgb) {
+		return 0.299 * (rgb >> 16 & 0xFF) + 0.587 * (rgb >> 8 & 0xFF) + 0.114 * (rgb & 0xFF);
+	}
+
+	/**
+	 * 깨끗한 메뉴 배경: ESC 메뉴와 모드 설정을 열어도 뒤 화면이 흐려지거나 검게 가려지지 않아야 한다.
+	 * 모듈을 끄면 바닐라처럼 흐려진다.
+	 */
+	private static void testMenuBackground(ClientGameTestContext context) {
+		check(Modules.MENU_BACKGROUND.isEnabled(), "깨끗한 메뉴 배경은 기본으로 켜져 있어야 합니다");
+		// HUD 와 채팅이 비교 영역에 끼어들지 않게 잠시 숨긴다 (F1 과 같은 상태).
+		context.runOnClient(minecraft -> minecraft.options.hideGui = true);
+		context.waitTicks(3);
+		double[] game = brightnessAndSharpness(context.takeScreenshot("background-game"));
+
+		context.setScreen(() -> new PauseScreen(true));
+		context.waitTicks(3);
+		double[] pause = brightnessAndSharpness(context.takeScreenshot("background-pause-clean"));
+		context.setScreen(() -> new CafeteriaScreen(null));
+		context.waitTicks(3);
+		double[] menu = brightnessAndSharpness(context.takeScreenshot("background-menu-clean"));
+
+		// 어둡게 0% 면 게임 화면과 똑같이 보인다.
+		context.runOnClient(minecraft -> Modules.MENU_BACKGROUND.dim.set(0.0));
+		context.waitTicks(3);
+		double[] noDim = brightnessAndSharpness(context.takeScreenshot("background-menu-no-dim"));
+		context.runOnClient(minecraft -> Modules.MENU_BACKGROUND.dim.reset());
+
+		// 모듈을 끄면 바닐라 배경(흐림 + 어둡게)으로 돌아간다.
+		context.runOnClient(minecraft -> Modules.MENU_BACKGROUND.setEnabled(false));
+		context.setScreen(() -> new PauseScreen(true));
+		context.waitTicks(3);
+		double[] vanilla = brightnessAndSharpness(context.takeScreenshot("background-pause-vanilla"));
+		context.runOnClient(minecraft -> {
+			Modules.MENU_BACKGROUND.setEnabled(true);
+			minecraft.options.hideGui = false;
+		});
+		context.setScreen(() -> null);
+		context.waitFor(minecraft -> minecraft.screen == null);
+
+		CafeteriaClient.LOGGER.info(
+			"CAFETERIA GAMETEST: 배경 밝기/선명도 — 게임 {}/{}, ESC {}/{}, 모드 설정 {}/{}, 어둡게 0% {}/{}, 바닐라 ESC {}/{}",
+			round(game[0]), round(game[1]), round(pause[0]), round(pause[1]), round(menu[0]), round(menu[1]),
+			round(noDim[0]), round(noDim[1]), round(vanilla[0]), round(vanilla[1]));
+
+		check(game[0] > 40.0 && game[1] > 1.0, "비교할 게임 화면이 너무 어둡거나 밋밋합니다: " + game[0] + ", " + game[1]);
+
+		for (double[] clean : List.of(pause, menu)) {
+			// 기본값(어둡게 25%)이면 밝기가 75% 로 줄 뿐이고 흐려지지는 않는다.
+			check(clean[0] > game[0] * 0.70 && clean[0] < game[0] * 0.80, "메뉴 배경 밝기가 예상(75%)과 다릅니다: " + game[0] + " → " + clean[0]);
+			check(clean[1] > game[1] * 0.70, "메뉴 배경이 흐려졌습니다: 선명도 " + game[1] + " → " + clean[1]);
+		}
+
+		check(Math.abs(noDim[0] - game[0]) < game[0] * 0.02 && Math.abs(noDim[1] - game[1]) < game[1] * 0.05,
+			"어둡게 0% 인데 게임 화면과 다릅니다: " + game[0] + "/" + game[1] + " → " + noDim[0] + "/" + noDim[1]);
+		check(vanilla[1] < pause[1] * 0.6, "모듈을 껐는데 바닐라 흐림 효과가 돌아오지 않았습니다: 선명도 " + pause[1] + " → " + vanilla[1]);
+	}
+
+	private static double round(double value) {
+		return Math.round(value * 100.0) / 100.0;
+	}
+
+	/** 채팅창에 쌓인 메시지를 최근 것부터 글자로 돌려준다. (필드 이름이 환경마다 달라서 형식으로 찾는다.) */
+	private static List<String> chatMessages(ClientGameTestContext context) {
+		return context.computeOnClient(CafeteriaClientGameTest::readChat);
+	}
+
+	private static List<String> readChat(Minecraft minecraft) {
+		ChatComponent chat = minecraft.gui.getChat();
+		List<String> messages = new ArrayList<>();
+
+		try {
+			for (Field field : ChatComponent.class.getDeclaredFields()) {
+				if (!List.class.isAssignableFrom(field.getType())) {
+					continue;
+				}
+
+				field.setAccessible(true);
+
+				for (Object entry : (List<?>) field.get(chat)) {
+					if (entry instanceof GuiMessage message) {
+						messages.add(message.content().getString());
+					}
+				}
+			}
+		} catch (IllegalAccessException e) {
+			throw new AssertionError("채팅 메시지를 읽을 수 없습니다", e);
+		}
+
+		return messages;
+	}
+
+	/** 채팅 시간: 채팅창에 올라오는 메시지 왼쪽에 시각이 붙는다. */
+	private static void testChatTime(ClientGameTestContext context) {
+		check(Modules.CHAT_TIME.isEnabled(), "채팅 시간은 기본으로 켜져 있어야 합니다");
+		LocalTime time = LocalTime.of(14, 5, 9);
+		check(Modules.CHAT_TIME.formatTime(time).equals("14:05"), "기본 시간 형식이 다릅니다: " + Modules.CHAT_TIME.formatTime(time));
+		context.runOnClient(minecraft -> Modules.CHAT_TIME.format.set("hms24"));
+		check(Modules.CHAT_TIME.formatTime(time).equals("14:05:09"), "초 포함 형식이 다릅니다: " + Modules.CHAT_TIME.formatTime(time));
+		context.runOnClient(minecraft -> Modules.CHAT_TIME.format.set("hm12"));
+		String twelveHour = context.computeOnClient(minecraft -> Modules.CHAT_TIME.formatTime(time));
+		boolean korean = context.computeOnClient(minecraft -> minecraft.getLanguageManager().getSelected().startsWith("ko"));
+		check(twelveHour.equals(korean ? "오후 2:05" : "2:05 PM"), "오전/오후 형식이 다릅니다: " + twelveHour);
+		check(context.computeOnClient(minecraft -> Modules.CHAT_TIME.withTime(Component.literal("안녕"), time).getString()).equals("[" + twelveHour + "] 안녕"),
+			"시간을 붙인 메시지가 예상과 다릅니다");
+		context.runOnClient(minecraft -> Modules.CHAT_TIME.format.reset());
+
+		context.runOnClient(minecraft -> {
+			minecraft.gui.getChat().clearMessages(false);
+			minecraft.gui.getChat().addMessage(Component.literal("<Steve> 카페테리아 채팅 시간 테스트"));
+			Modules.CHAT_TIME.brackets.set(false);
+			minecraft.gui.getChat().addMessage(Component.literal("<Alex> 대괄호 없이"));
+			Modules.CHAT_TIME.brackets.reset();
+			Modules.CHAT_TIME.setEnabled(false);
+			minecraft.gui.getChat().addMessage(Component.literal("<Steve> 시간 표시를 끈 메시지"));
+			Modules.CHAT_TIME.setEnabled(true);
+		});
+		List<String> messages = chatMessages(context);
+		check(messages.size() == 3, "채팅 메시지 수가 다릅니다: " + messages);
+		check(messages.get(2).matches("\\[\\d\\d:\\d\\d] <Steve> 카페테리아 채팅 시간 테스트"), "채팅에 시간이 붙지 않았습니다: " + messages.get(2));
+		check(messages.get(1).matches("\\d\\d:\\d\\d <Alex> 대괄호 없이"), "대괄호를 끈 형식이 다릅니다: " + messages.get(1));
+		check(messages.get(0).equals("<Steve> 시간 표시를 끈 메시지"), "모듈을 껐는데 시간이 붙었습니다: " + messages.get(0));
+		context.waitTicks(3);
+		context.takeScreenshot("chat-time");
+		context.runOnClient(minecraft -> minecraft.gui.getChat().clearMessages(false));
+	}
+
+	/** 무한 채팅: 바닐라의 100줄 제한을 넘겨도 예전 채팅이 지워지지 않는다. */
+	private static void testInfiniteChat(ClientGameTestContext context) {
+		check(Modules.INFINITE_CHAT.isEnabled(), "무한 채팅은 기본으로 켜져 있어야 합니다");
+		context.runOnClient(minecraft -> {
+			minecraft.gui.getChat().clearMessages(false);
+
+			for (int i = 1; i <= 250; i++) {
+				minecraft.gui.getChat().addMessage(Component.literal("무한 채팅 " + i + "번째 줄"));
+			}
+		});
+		List<String> kept = chatMessages(context);
+		check(kept.size() == 250, "250줄을 넣었는데 " + kept.size() + "줄만 남았습니다");
+		check(kept.get(249).endsWith("무한 채팅 1번째 줄"), "가장 오래된 채팅이 지워졌습니다: " + kept.get(249));
+
+		// 채팅창을 열고 맨 위로 올리면 첫 줄까지 보인다.
+		context.setScreen(() -> new ChatScreen(""));
+		context.runOnClient(minecraft -> minecraft.gui.getChat().scrollChat(100000));
+		context.waitTicks(3);
+		context.takeScreenshot("infinite-chat-scrolled-to-top");
+		context.setScreen(() -> null);
+
+		// 모듈을 끄면 다음 메시지부터 바닐라처럼 100줄만 남는다.
+		context.runOnClient(minecraft -> {
+			Modules.INFINITE_CHAT.setEnabled(false);
+			minecraft.gui.getChat().addMessage(Component.literal("무한 채팅을 끈 뒤의 줄"));
+			Modules.INFINITE_CHAT.setEnabled(true);
+		});
+		check(chatMessages(context).size() == 100, "모듈을 껐는데 100줄로 줄지 않았습니다: " + chatMessages(context).size());
+		context.runOnClient(minecraft -> minecraft.gui.getChat().clearMessages(false));
+	}
+
+	/**
+	 * 스크린샷 도구: F2 로 찍으면 채팅 안내에 [복사] 버튼이 붙고, 버튼(명령어)을 실행하면 그 그림이 클립보드에 들어간다.
+	 * 클립보드는 게임 밖 프로그램(xclip)으로도 읽어서 실제로 다른 프로그램에 붙여 넣을 수 있는 상태인지 확인한다.
+	 */
+	private static void testScreenshotCopy(ClientGameTestContext context, TestInput input) {
+		check(Modules.SCREENSHOT.isEnabled(), "스크린샷 도구는 기본으로 켜져 있어야 합니다");
+		String copyLabel = context.computeOnClient(minecraft -> Component.translatable("cafeteria.screenshot.copy").getString());
+		context.runOnClient(minecraft -> minecraft.gui.getChat().clearMessages(false));
+
+		input.pressKey(GLFW.GLFW_KEY_F2);
+		context.waitFor(minecraft -> readChat(minecraft).stream().anyMatch(message -> message.contains(copyLabel)), 400);
+		String notice = chatMessages(context).get(0);
+		java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\\d{4}-\\d\\d-\\d\\d_\\d\\d\\.\\d\\d\\.\\d\\d(_\\d+)?\\.png").matcher(notice);
+		check(matcher.find(), "스크린샷 안내에서 파일 이름을 찾을 수 없습니다: " + notice);
+		String fileName = matcher.group();
+		Path file = context.computeOnClient(minecraft -> minecraft.gameDirectory.toPath().resolve("screenshots").resolve(fileName));
+		check(Files.isRegularFile(file), "스크린샷 파일이 없습니다: " + file);
+		check(ScreenshotClipboard.lastCopied() == null, "자동 복사를 켜지 않았는데 이미 복사됐습니다");
+		context.setScreen(() -> new ChatScreen(""));
+		context.waitTicks(3);
+		context.takeScreenshot("screenshot-copy-button");
+		context.setScreen(() -> null);
+
+		// [복사] 버튼이 실행하는 명령어를 그대로 실행한다.
+		boolean handled = context.computeOnClient(minecraft -> minecraft.player.connection.sendUnsignedCommand(ScreenshotModule.COPY_COMMAND + fileName));
+		check(handled, "복사 명령어가 실행되지 않았습니다");
+		context.waitFor(minecraft -> file.equals(ScreenshotClipboard.lastCopied()), 400);
+		BufferedImage saved = readImage(file);
+		BufferedImage copied = clipboardImage();
+		check(copied != null && copied.getWidth() == saved.getWidth() && copied.getHeight() == saved.getHeight(),
+			"클립보드의 그림이 스크린샷과 다릅니다: " + (copied == null ? "없음" : copied.getWidth() + "x" + copied.getHeight()));
+		check(copied.getRGB(copied.getWidth() / 2, copied.getHeight() / 3) == (saved.getRGB(saved.getWidth() / 2, saved.getHeight() / 3) | 0xFF000000),
+			"클립보드 그림의 내용이 스크린샷과 다릅니다");
+		checkClipboardFromOutside(saved);
+
+		// 스크린샷 폴더 밖의 파일이나 없는 파일은 복사하지 않는다.
+		context.runOnClient(minecraft -> {
+			minecraft.gui.getChat().clearMessages(false);
+			minecraft.player.connection.sendUnsignedCommand(ScreenshotModule.COPY_COMMAND + "../options.txt");
+			minecraft.player.connection.sendUnsignedCommand(ScreenshotModule.COPY_COMMAND + "없는파일.png");
+		});
+		context.waitTicks(5);
+		check(chatMessages(context).size() == 2 && file.equals(ScreenshotClipboard.lastCopied()), "잘못된 파일 이름을 거르지 못했습니다: " + chatMessages(context));
+
+		// "찍으면 자동 복사"를 켜면 누르지 않아도 새 스크린샷이 클립보드에 들어간다.
+		context.runOnClient(minecraft -> Modules.SCREENSHOT.autoCopy.set(true));
+		// 파일 이름이 초 단위라서, 같은 이름이 되지 않게 1초 넘게 기다렸다가 찍는다.
+		context.waitTicks(30);
+		input.pressKey(GLFW.GLFW_KEY_F2);
+		context.waitFor(minecraft -> ScreenshotClipboard.lastCopied() != null && !file.equals(ScreenshotClipboard.lastCopied()), 400);
+		context.runOnClient(minecraft -> {
+			Modules.SCREENSHOT.autoCopy.reset();
+			minecraft.gui.getChat().clearMessages(false);
+		});
+
+		// 모듈을 끄면 바닐라 안내 그대로다.
+		context.runOnClient(minecraft -> Modules.SCREENSHOT.setEnabled(false));
+		context.waitTicks(30);
+		input.pressKey(GLFW.GLFW_KEY_F2);
+		context.waitFor(minecraft -> !readChat(minecraft).isEmpty(), 400);
+		check(!chatMessages(context).get(0).contains(copyLabel), "모듈을 껐는데 [복사] 버튼이 붙었습니다");
+		context.runOnClient(minecraft -> {
+			Modules.SCREENSHOT.setEnabled(true);
+			minecraft.gui.getChat().clearMessages(false);
+		});
+	}
+
+	/** 지금 클립보드에 있는 그림. 그림이 아니면 null. */
+	private static BufferedImage clipboardImage() {
+		try {
+			java.awt.datatransfer.Clipboard clipboard = java.awt.Toolkit.getDefaultToolkit().getSystemClipboard();
+
+			if (!clipboard.isDataFlavorAvailable(java.awt.datatransfer.DataFlavor.imageFlavor)) {
+				return null;
+			}
+
+			java.awt.Image image = (java.awt.Image) clipboard.getData(java.awt.datatransfer.DataFlavor.imageFlavor);
+			BufferedImage result = new BufferedImage(image.getWidth(null), image.getHeight(null), BufferedImage.TYPE_INT_ARGB);
+			java.awt.Graphics2D graphics = result.createGraphics();
+			graphics.drawImage(image, 0, 0, null);
+			graphics.dispose();
+			return result;
+		} catch (Exception e) {
+			throw new AssertionError("클립보드를 읽을 수 없습니다", e);
+		}
+	}
+
+	/** 다른 프로그램(xclip)이 클립보드에서 그림을 꺼낼 수 있는지 확인한다. xclip 이 없는 환경(Windows 등)에서는 건너뛴다. */
+	private static void checkClipboardFromOutside(BufferedImage expected) {
+		Path output;
+
+		try {
+			output = Files.createTempFile("cafeteria-clipboard", ".png");
+			Process process = new ProcessBuilder("xclip", "-selection", "clipboard", "-t", "image/png", "-o")
+				.redirectOutput(output.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+
+			if (!process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS) || process.exitValue() != 0) {
+				process.destroyForcibly();
+				throw new AssertionError("다른 프로그램이 클립보드에서 그림을 꺼내지 못했습니다");
+			}
+		} catch (java.io.IOException e) {
+			CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: xclip 이 없어 게임 밖에서의 클립보드 확인은 건너뜁니다");
+			return;
+		} catch (InterruptedException e) {
+			throw new AssertionError(e);
+		}
+
+		BufferedImage pasted = readImage(output);
+		check(pasted != null && pasted.getWidth() == expected.getWidth() && pasted.getHeight() == expected.getHeight(),
+			"다른 프로그램이 꺼낸 그림의 크기가 다릅니다");
+		check((pasted.getRGB(pasted.getWidth() / 2, pasted.getHeight() / 3) | 0xFF000000) == (expected.getRGB(expected.getWidth() / 2, expected.getHeight() / 3) | 0xFF000000),
+			"다른 프로그램이 꺼낸 그림의 내용이 다릅니다");
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 게임 밖 프로그램(xclip)에서 클립보드 그림 확인 완료 ({}x{})", pasted.getWidth(), pasted.getHeight());
+	}
+
+	/** HUD 편집 화면에서 지금 선택된 요소들. */
+	private static Set<HudElement> selection(ClientGameTestContext context) {
+		return context.computeOnClient(minecraft -> Set.copyOf(((HudEditScreen) minecraft.screen).selection()));
+	}
+
+	/** HUD 위치 편집: 빈 곳을 끌어 박스로 여러 개 선택하고 함께 옮긴다. */
+	private static void testHudBoxSelection(ClientGameTestContext context, TestInput input) {
+		context.setScreen(() -> new HudEditScreen(null));
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.FPS || element == Modules.CPS || element == Modules.PING);
+			}
+
+			Modules.FPS.setPosition(minecraft, 100, 100, minecraft.screen.width, minecraft.screen.height);
+			Modules.CPS.setPosition(minecraft, 100, 120, minecraft.screen.width, minecraft.screen.height);
+			Modules.PING.setPosition(minecraft, 300, 150, minecraft.screen.width, minecraft.screen.height);
+		});
+
+		// 1) 빈 곳에서 끌면 박스가 그려지고, 박스에 닿은 요소(FPS, CPS)만 선택된다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(90, 90, 0);
+			minecraft.screen.mouseDragged(160, 135, 0, 0, 0);
+		});
+		context.takeScreenshot("hud-edit-box-select");
+		context.runOnClient(minecraft -> minecraft.screen.mouseReleased(160, 135, 0));
+		check(selection(context).equals(Set.of(Modules.FPS, Modules.CPS)), "박스 선택 결과가 다릅니다: " + names(selection(context)));
+
+		// 2) 선택한 것 중 하나를 끌면 함께 움직이고, 선택하지 않은 요소는 그대로 있다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(103, 103, 0);
+			minecraft.screen.mouseDragged(133, 123, 0, 0, 0);
+			minecraft.screen.mouseReleased(133, 123, 0);
+		});
+		int[] fps = position(context, Modules.FPS);
+		int[] cps = position(context, Modules.CPS);
+		int[] ping = position(context, Modules.PING);
+		check(fps[0] == 130 && fps[1] == 120 && cps[0] == 130 && cps[1] == 140, "선택한 요소들이 함께 움직이지 않았습니다: FPS " + fps[0] + "," + fps[1] + " CPS " + cps[0] + "," + cps[1]);
+		check(ping[0] == 300 && ping[1] == 150, "선택하지 않은 요소가 움직였습니다: " + ping[0] + ", " + ping[1]);
+		check(selection(context).size() == 2, "함께 끈 뒤에 선택이 풀렸습니다");
+		context.takeScreenshot("hud-edit-group-moved");
+
+		// 3) 방향키도 선택한 요소 전부를 옮긴다.
+		input.pressKey(GLFW.GLFW_KEY_RIGHT);
+		check(position(context, Modules.FPS)[0] == 131 && position(context, Modules.CPS)[0] == 131, "방향키가 선택한 요소 전부를 옮기지 않았습니다");
+
+		// 4) 화면 밖으로 끌어도 묶음의 간격이 유지된 채 화면 안에 머문다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(134, 123, 0);
+			minecraft.screen.mouseDragged(-900, -900, 0, 0, 0);
+			minecraft.screen.mouseReleased(-900, -900, 0);
+		});
+		fps = position(context, Modules.FPS);
+		cps = position(context, Modules.CPS);
+		check(fps[0] == 0 && fps[1] == 0 && cps[0] == 0 && cps[1] == 20, "묶음을 화면 밖으로 끌었을 때 간격이 깨졌습니다: FPS " + fps[0] + "," + fps[1] + " CPS " + cps[0] + "," + cps[1]);
+
+		// 5) Ctrl+클릭: 선택에 추가하고, 다시 누르면 뺀다.
+		input.holdControl();
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(303, 153, 0);
+			minecraft.screen.mouseReleased(303, 153, 0);
+		});
+		check(selection(context).equals(Set.of(Modules.FPS, Modules.CPS, Modules.PING)), "Ctrl+클릭으로 선택에 추가되지 않았습니다: " + names(selection(context)));
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(3, 23, 0);
+			minecraft.screen.mouseReleased(3, 23, 0);
+		});
+		input.releaseControl();
+		check(selection(context).equals(Set.of(Modules.FPS, Modules.PING)), "Ctrl+클릭으로 선택에서 빠지지 않았습니다: " + names(selection(context)));
+
+		// 6) 여러 개 선택한 상태에서 그중 하나를 끌지 않고 누르면 그것만 선택된다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(303, 153, 0);
+			minecraft.screen.mouseReleased(303, 153, 0);
+		});
+		check(selection(context).equals(Set.of(Modules.PING)), "하나만 눌렀는데 선택이 줄지 않았습니다: " + names(selection(context)));
+
+		// 7) 빈 곳을 누르면 선택이 풀리고, Ctrl+A 는 전부 선택한다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(200, 200, 0);
+			minecraft.screen.mouseReleased(200, 200, 0);
+		});
+		check(selection(context).isEmpty(), "빈 곳을 눌렀는데 선택이 남아 있습니다: " + names(selection(context)));
+		input.holdControl();
+		input.pressKey(GLFW.GLFW_KEY_A);
+		input.releaseControl();
+		check(selection(context).size() == 3, "Ctrl+A 로 전부 선택되지 않았습니다: " + names(selection(context)));
+		context.takeScreenshot("hud-edit-select-all");
+
+		context.clickScreenButton("cafeteria.hud_edit.reset");
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		// 기본 상태로 되돌린다: 좌표·콤보·리치만 꺼져 있고 나머지는 켜져 있다.
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+			}
+		});
+	}
+
+	private static String names(Set<HudElement> elements) {
+		return elements.stream().map(HudElement::id).sorted().toList().toString();
 	}
 
 	private static void testFreelook(ClientGameTestContext context, TestInput input) {
