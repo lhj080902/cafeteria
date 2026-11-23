@@ -10,7 +10,8 @@ const http = require('./http');
 const importer = require('./importer');
 const installer = require('./installer');
 const { installMod } = require('./mod-installer');
-const { ModManager } = require('./mods');
+const { applyModUpdate, checkModUpdates } = require('./mod-updater');
+const { ModManager, baseName } = require('./mods');
 const { isOfficialLauncherRunning, launchOfficialLauncher } = require('./official-launcher');
 const paths = require('./paths');
 const { SettingsStore } = require('./settings');
@@ -38,6 +39,13 @@ let settings;
 let updates;
 let playing = false;
 let identifyingMods = false;
+/**
+ * 마지막으로 확인한 모드 업데이트. 화면에는 이름과 버전만 넘기고, 실제로 받을 주소는 여기 보관한 것만 쓴다.
+ * @type {{updates: import('./mod-updater').ModUpdate[], checked: number, unknown: string[], notes: string[], checkedAt: number | null}}
+ */
+let modUpdates = { updates: [], checked: 0, unknown: [], notes: [], checkedAt: null };
+/** 진행 중인 업데이트 확인. 동시에 두 번 확인하지 않는다. */
+let modUpdateCheck = null;
 
 function gameDir() {
   return settings.get('gameDir') || paths.defaultGameDir();
@@ -75,6 +83,63 @@ function createUpdateManager() {
       : '설치 파일로 설치한 Windows 런처에서만 자동 업데이트를 지원합니다.',
     onChange: (state) => send('update', state),
   });
+}
+
+/** 화면에 넘겨도 되는 모드 업데이트 정보 (받을 주소는 뺀다). */
+function publicModUpdates() {
+  return {
+    updates: modUpdates.updates.map(({ fileName, name, source, currentVersion, newVersion }) => ({ fileName, name, source, currentVersion, newVersion })),
+    checked: modUpdates.checked,
+    unknown: modUpdates.unknown,
+    notes: modUpdates.notes,
+    checkedAt: modUpdates.checkedAt,
+  };
+}
+
+function setModUpdates(next) {
+  modUpdates = next;
+  send('mod-updates', publicModUpdates());
+}
+
+/** 설치된 모드의 새 버전이 있는지 확인하고 결과를 화면에 알린다. */
+function refreshModUpdates() {
+  if (!modUpdateCheck) {
+    modUpdateCheck = checkModUpdates({ modManager: modManager(), curseforgeKey: settings.curseforgeKey() })
+      .then((result) => {
+        setModUpdates({ ...result, checkedAt: Date.now() });
+        return publicModUpdates();
+      })
+      .finally(() => {
+        modUpdateCheck = null;
+      });
+  }
+
+  return modUpdateCheck;
+}
+
+/** 모드 파일이 바뀌었을 때(삭제, 켜기/끄기, 교체) 보관해 둔 업데이트 목록을 그에 맞춘다. */
+function forgetModUpdate(fileName, renamedTo = null) {
+  const updates = modUpdates.updates
+    .map((update) => (baseName(update.fileName) === baseName(fileName) ? renamedTo && { ...update, fileName: renamedTo } : update))
+    .filter(Boolean);
+  setModUpdates({ ...modUpdates, updates });
+}
+
+async function updateOneMod(fileName) {
+  const update = modUpdates.updates.find((candidate) => candidate.fileName === fileName);
+
+  if (!update) {
+    throw new LauncherError('NO_UPDATE', '업데이트 정보를 찾을 수 없습니다. "업데이트 확인"을 다시 눌러 주세요.');
+  }
+
+  const result = await applyModUpdate({
+    modManager: modManager(),
+    update,
+    resolveFile: sourceApi(update.source).resolveFile,
+    onProgress: (progress) => sendProgress(`update:${fileName}`, progress),
+  });
+  forgetModUpdate(fileName);
+  return { name: update.name, version: update.newVersion, ...result };
 }
 
 /** 직접 넣은 모드의 이름·아이콘을 Modrinth 에서 찾아 두고, 새로 알아낸 것이 있으면 화면에 알린다. */
@@ -125,6 +190,11 @@ function createWindow() {
 
     if (settings.get('autoUpdate')) {
       updates.check(false);
+    }
+
+    // 모드의 새 버전은 확인만 해 두고 "내 모드"에 표시한다. 인터넷이 없으면 조용히 넘어간다.
+    if (settings.get('modUpdateCheck')) {
+      refreshModUpdates().catch((error) => console.error('[mods:checkUpdates]', error.message));
     }
   });
   window.on('closed', () => {
@@ -216,6 +286,17 @@ function play() {
   });
 }
 
+/** 직접 고른 jar 파일을 추가한다. 같은 모드의 예전 파일이 교체됐으면 그 파일의 업데이트 정보도 지운다. */
+async function addLocalMods(filePaths) {
+  const result = await modManager().addLocalFiles(filePaths);
+
+  for (const fileName of [...result.added, ...result.replaced.map((entry) => entry.old)]) {
+    forgetModUpdate(fileName);
+  }
+
+  return result;
+}
+
 function sourceApi(source) {
   if (source === 'modrinth') {
     return { search: (query, page) => modrinth.search(query, page), resolveFile: (id) => modrinth.resolveFile(id) };
@@ -261,7 +342,7 @@ function registerHandlers() {
       properties: ['openFile', 'multiSelections'],
     });
 
-    return result.canceled ? { added: [], rejected: [] } : modManager().addLocalFiles(result.filePaths);
+    return result.canceled ? { added: [], rejected: [], replaced: [] } : addLocalMods(result.filePaths);
   });
 
   handle('mods:addPaths', (filePaths) => {
@@ -269,11 +350,42 @@ function registerHandlers() {
       throw new LauncherError('BAD_REQUEST', '추가할 파일 목록이 올바르지 않습니다.');
     }
 
-    return modManager().addLocalFiles(filePaths);
+    return addLocalMods(filePaths);
   });
 
-  handle('mods:setEnabled', (fileName, enabled) => modManager().setEnabled(fileName, Boolean(enabled)));
-  handle('mods:remove', (fileName) => modManager().remove(fileName));
+  handle('mods:setEnabled', async (fileName, enabled) => {
+    const renamed = await modManager().setEnabled(fileName, Boolean(enabled));
+    forgetModUpdate(fileName, renamed);
+    return renamed;
+  });
+  handle('mods:remove', async (fileName) => {
+    await modManager().remove(fileName);
+    forgetModUpdate(fileName);
+  });
+
+  handle('mods:getUpdates', publicModUpdates);
+  handle('mods:checkUpdates', refreshModUpdates);
+  handle('mods:update', (fileName) => exclusive(() => updateOneMod(fileName)));
+  handle('mods:updateAll', () =>
+    exclusive(async () => {
+      const updated = [];
+      const failed = [];
+      const warnings = [];
+
+      // 하나가 실패해도 나머지는 계속 진행하고, 무엇이 실패했는지 알려 준다.
+      for (const update of [...modUpdates.updates]) {
+        try {
+          const result = await updateOneMod(update.fileName);
+          updated.push(`${result.name} ${result.version}`.trim());
+          warnings.push(...result.warnings);
+        } catch (error) {
+          failed.push(`${update.name}: ${error.message}`);
+        }
+      }
+
+      return { updated, failed, warnings };
+    }),
+  );
 
   handle('mods:openFolder', async () => {
     const directory = modManager().modsDir;
@@ -358,7 +470,14 @@ function registerHandlers() {
       properties: ['openDirectory', 'createDirectory'],
     });
 
-    return result.canceled ? settings.publicView() : settings.update({ gameDir: result.filePaths[0] });
+    if (result.canceled) {
+      return settings.publicView();
+    }
+
+    const view = await settings.update({ gameDir: result.filePaths[0] });
+    // 게임 폴더가 바뀌면 모드 목록도 달라지므로, 예전 폴더 기준의 업데이트 목록은 버린다.
+    setModUpdates({ updates: [], checked: 0, unknown: [], notes: [], checkedAt: null });
+    return view;
   });
 
   handle('app:openExternal', async (url) => {

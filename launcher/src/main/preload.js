@@ -26,6 +26,12 @@ contextBridge.exposeInMainWorld('cafeteria', {
   setModEnabled: (fileName, enabled) => invoke('mods:setEnabled', fileName, enabled),
   removeMod: (fileName) => invoke('mods:remove', fileName),
   openModsFolder: () => invoke('mods:openFolder'),
+  /** 마지막으로 확인해 둔 모드 업데이트 목록. */
+  getModUpdates: () => invoke('mods:getUpdates'),
+  /** 설치된 모드의 새 버전이 있는지 지금 확인한다. */
+  checkModUpdates: () => invoke('mods:checkUpdates'),
+  updateMod: (fileName) => invoke('mods:update', fileName),
+  updateAllMods: () => invoke('mods:updateAll'),
 
   searchMods: (source, query, page) => invoke('browse:search', source, query, page),
   installMod: (source, projectId) => invoke('browse:install', source, projectId),
@@ -54,4 +60,6 @@ contextBridge.exposeInMainWorld('cafeteria', {
   onUpdateState: (callback) => subscribe('update', callback),
   /** 모드 목록의 정보(이름·아이콘)가 새로 채워졌을 때 받는다. */
   onModsUpdated: (callback) => subscribe('mods-updated', callback),
+  /** 모드 업데이트 목록이 바뀔 때마다 받는다. */
+  onModUpdates: (callback) => subscribe('mod-updates', callback),
 });

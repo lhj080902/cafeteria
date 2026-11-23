@@ -263,6 +263,79 @@ async function main() {
       await toastGone();
     }
 
+    // ── 내 모드: 새 버전 확인 → 업데이트 ──
+    // Modrinth 에 올라와 있는 모드 두 개(Sodium, Lithium)의 예전 버전을 "직접 넣은 모드"처럼 넣어 두고,
+    // 어느 사이트에도 없는 직접 만든 모드도 하나 둔다.
+    const modrinthApi = require(path.join(launcherDir, 'src', 'main', 'sources', 'modrinth'));
+    const launcherHttp = require(path.join(launcherDir, 'src', 'main', 'http'));
+    const outdated = [];
+
+    for (const [projectId, title] of [['AANobbMI', 'Sodium'], ['gvQqBUqZ', 'Lithium']]) {
+      const releases = (await modrinthApi.listVersions(projectId)).filter((candidate) => candidate.version_type === 'release');
+      assert.ok(releases.length >= 2, `${title} 의 1.21.4 용 정식 버전이 둘 이상 있어야 한다`);
+      const old = await modrinthApi.describeVersion(releases[releases.length - 1], title);
+      await launcherHttp.download(old.url, path.join(modsDir, old.fileName), { allowedHosts: ['cdn.modrinth.com'], hashes: old.hashes });
+      outdated.push({ title, oldFile: old.fileName, newest: releases[0].version_number, newestFile: releases[0].files.find((file) => file.primary).filename });
+    }
+
+    localZip.writeZip(path.join(modsDir, 'my-local-mod.jar'));
+    await nav('mods');
+    assert.equal(await page.locator('#mods-update-badge').isHidden(), true, '확인하기 전에는 숫자 표시가 없다');
+    await page.locator('#mods-check-updates').click();
+    await waitForText('.toast', '새 버전이 나온 모드가 2개 있습니다.');
+    assert.equal(await text('#mods-update-badge'), '2');
+    assert.equal(await text('#mods-update-summary'), '새 버전이 나온 모드 2개');
+    assert.match(await text('#mods-update-note'), /직접 넣은 모드\(내가 만든 모드\)는 모드 사이트에 없어서/);
+    const [sodiumOld, lithiumOld] = outdated;
+    const outdatedRow = page.locator('#mods-list .row').filter({ hasText: sodiumOld.oldFile });
+    assert.equal(await outdatedRow.locator('.chip.update').innerText(), `새 버전 ${sodiumOld.newest}`);
+    assert.equal(await page.locator('#mods-list .chip.update').count(), 2);
+    await toastGone();
+    await shot('mods-updates-found');
+
+    // 한 개만 업데이트: 새 파일로 바뀌고 예전 파일은 사라진다
+    await outdatedRow.locator('.button.primary', { hasText: '업데이트' }).click();
+    await waitForText('.toast.success', `Sodium ${sodiumOld.newest} 업데이트 완료`);
+    await waitForText('#mods-update-badge', '1');
+    assert.equal(fs.existsSync(path.join(modsDir, sodiumOld.oldFile)), false, '예전 Sodium 파일은 지워진다');
+    assert.ok(fs.existsSync(path.join(modsDir, sodiumOld.newestFile)), '새 Sodium 파일이 있어야 한다');
+    assert.equal(readJson(path.join(gameDir, 'cafeteria-mods.json')).files[sodiumOld.newestFile].source, 'modrinth');
+    await toastGone();
+
+    // 나머지는 "모두 업데이트"
+    await page.locator('#mods-update-all').click();
+    await waitForText('.toast.success', '모드 1개를 업데이트했습니다');
+    await page.locator('#mods-update-badge').waitFor({ state: 'hidden' });
+    assert.equal(fs.existsSync(path.join(modsDir, lithiumOld.oldFile)), false, '예전 Lithium 파일은 지워진다');
+    assert.ok(fs.existsSync(path.join(modsDir, lithiumOld.newestFile)), '새 Lithium 파일이 있어야 한다');
+    assert.equal(await text('#mods-update-summary'), '받은 모드는 모두 최신입니다');
+    assert.equal(await page.locator('#mods-list .chip.update').count(), 0);
+    await toastGone();
+    await shot('mods-updated');
+
+    // 사이트에 없는 모드는 새 jar 를 넣으면 예전 파일과 바뀐다
+    const newerLocalJar = path.join(root, 'my-local-mod-0.2.jar');
+    const newerLocalZip = new AdmZip();
+    newerLocalZip.addFile('fabric.mod.json', Buffer.from(JSON.stringify({ id: 'my-local-mod', name: '내가 만든 모드', version: '0.2' })));
+    newerLocalZip.writeZip(newerLocalJar);
+    await page.locator('#e2e-files').setInputFiles([newerLocalJar]);
+    await page.evaluate(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(document.querySelector('#e2e-files').files[0]);
+      document.querySelector('#view-mods').dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    });
+    await waitForText('.toast', 'my-local-mod.jar → my-local-mod-0.2.jar');
+    assert.equal(fs.existsSync(path.join(modsDir, 'my-local-mod.jar')), false, '같은 모드의 예전 파일은 지워진다');
+    assert.ok(fs.existsSync(path.join(modsDir, 'my-local-mod-0.2.jar')));
+    assert.equal(await page.locator('#mods-list .row').filter({ hasText: '내가 만든 모드' }).count(), 1);
+
+    for (const name of [sodiumOld.newestFile, lithiumOld.newestFile, 'my-local-mod-0.2.jar']) {
+      fs.rmSync(path.join(modsDir, name));
+    }
+
+    await toastGone();
+    await toastGone();
+
     // ── 설정 가져오기 ──
     await nav('import');
     const source = page.locator('#import-sources .source').filter({ hasText: '기본 마인크래프트 폴더' });
@@ -351,6 +424,15 @@ async function main() {
     await page.locator('#setting-auto-update').check();
     await page.waitForTimeout(300);
     assert.equal(readJson(settingsFile).autoUpdate, true);
+
+    // 모드 업데이트 확인: 기본으로 켜져 있고, 끄면 저장된다
+    assert.equal(await page.locator('#setting-mod-update-check').isChecked(), true);
+    await page.locator('#setting-mod-update-check').uncheck();
+    await page.waitForTimeout(300);
+    assert.equal(readJson(settingsFile).modUpdateCheck, false);
+    await page.locator('#setting-mod-update-check').check();
+    await page.waitForTimeout(300);
+    assert.equal(readJson(settingsFile).modUpdateCheck, true);
 
     await page.locator('#curseforge-key').fill('e2e-dummy-key');
     await page.locator('#curseforge-form button[type="submit"]').click();

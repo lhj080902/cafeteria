@@ -21,6 +21,8 @@ const DEFAULTS = Object.freeze({
   closeOnLaunch: false,
   /** 런처를 켤 때 새 버전이 있는지 확인하고 자동으로 내려받을지 여부. */
   autoUpdate: true,
+  /** 런처를 켤 때 설치된 모드의 새 버전이 있는지 확인할지 여부. 확인만 하고, 바꾸는 것은 사용자가 누를 때 한다. */
+  modUpdateCheck: true,
   /** 공식 런처 실행 파일 경로. 비어 있으면 자동으로 찾는다. */
   launcherPath: '',
   /** 게임 폴더. 비어 있으면 기본 위치(.cafeteria)를 쓴다. */
@@ -150,7 +152,7 @@ function sanitize(input) {
     result.memoryGb = Math.min(MAX_MEMORY_GB, Math.max(MIN_MEMORY_GB, Math.round(input.memoryGb)));
   }
 
-  for (const name of ['closeOnLaunch', 'resolutionEnabled', 'autoUpdate']) {
+  for (const name of ['closeOnLaunch', 'resolutionEnabled', 'autoUpdate', 'modUpdateCheck']) {
     if (typeof input[name] === 'boolean') {
       result[name] = input[name];
     }

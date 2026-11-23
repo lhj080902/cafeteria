@@ -25,6 +25,7 @@ test('처음에는 기본값을 쓴다', async (t) => {
     javaPath: '',
     closeOnLaunch: false,
     autoUpdate: true,
+    modUpdateCheck: true,
     launcherPath: '',
     gameDir: '',
     hasCurseforgeKey: false,

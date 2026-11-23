@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const AdmZip = require('adm-zip');
-const { BUILTIN_MOD_IDS } = require('./constants');
+const { BUILTIN_MOD_IDS, CAFETERIA_MOD_ID } = require('./constants');
 const { LauncherError } = require('./errors');
 const { exists, readJson, writeFileAtomic } = require('./fs-util');
 const http = require('./http');
@@ -222,11 +222,18 @@ class ModManager {
     return found;
   }
 
-  /** PC에 있는 jar 파일을 mods 폴더로 복사한다. 추가된 파일 이름 목록을 돌려준다. */
+  /**
+   * PC에 있는 jar 파일을 mods 폴더로 복사한다.
+   * 같은 모드(fabric.mod.json 의 id 가 같은 것)의 다른 파일이 이미 있으면 새 파일로 교체한다.
+   * 직접 만든 모드처럼 사이트에 없는 모드는 이렇게 새 jar 를 넣는 것이 곧 업데이트다.
+   *
+   * @returns {Promise<{added: string[], rejected: string[], replaced: {old: string, new: string}[]}>}
+   */
   async addLocalFiles(filePaths) {
     await fsp.mkdir(this.modsDir, { recursive: true });
     const added = [];
     const rejected = [];
+    const replaced = [];
 
     for (const source of filePaths) {
       const fileName = typeof source === 'string' ? path.basename(source) : '';
@@ -234,6 +241,14 @@ class ModManager {
 
       if (!stat || !stat.isFile() || !fileName.toLowerCase().endsWith(ENABLED_SUFFIX) || !FILE_NAME_PATTERN.test(fileName)) {
         rejected.push(fileName || String(source));
+        continue;
+      }
+
+      const modId = this.readMetadata(source, stat).id;
+
+      // Cafeteria 모드는 런처에 들어 있는 것을 쓴다. 따로 넣으면 같은 모드가 두 벌이 되어 게임이 켜지지 않는다.
+      if (modId === CAFETERIA_MOD_ID) {
+        rejected.push(fileName);
         continue;
       }
 
@@ -245,11 +260,57 @@ class ModManager {
         await fsp.rm(`${destination}.disabled`, { force: true });
       }
 
+      for (const old of modId ? await this.filesOfMod(modId, fileName) : []) {
+        await fsp.rm(path.join(this.modsDir, old), { force: true });
+        await this.forget(old);
+        replaced.push({ old, new: fileName });
+      }
+
       await this.record(fileName, { source: 'local' });
       added.push(fileName);
     }
 
-    return { added, rejected };
+    return { added, rejected, replaced };
+  }
+
+  /** mods 폴더에서 주어진 모드 id 를 가진 파일들 (except 로 준 파일은 뺀다). 꺼진 파일도 포함한다. */
+  async filesOfMod(modId, except) {
+    const found = [];
+
+    for (const name of await this.fileNames()) {
+      if (baseName(name) === baseName(except)) {
+        continue;
+      }
+
+      const file = path.join(this.modsDir, name);
+
+      if (this.readMetadata(file, await fsp.stat(file)).id === modId) {
+        found.push(name);
+      }
+    }
+
+    return found;
+  }
+
+  /**
+   * 예전 모드 파일을, 이미 mods 폴더에 받아 둔 새 파일(newName)로 바꾼다 (모드 업데이트).
+   * 예전 파일이 꺼져 있었으면 새 파일도 꺼 둔다.
+   *
+   * @returns {Promise<string>} 바꾼 뒤의 파일 이름
+   */
+  async replaceFile(oldFileName, newName, { enabled, ...info }) {
+    this.resolve(newName);
+
+    if (baseName(oldFileName) !== newName) {
+      await fsp.rm(this.resolve(oldFileName), { force: true });
+      await this.forget(oldFileName);
+    } else if (oldFileName !== newName) {
+      // 이름이 같은 새 파일을 받았는데 예전 것이 꺼진 상태(.disabled)로 남아 있는 경우
+      await fsp.rm(this.resolve(oldFileName), { force: true });
+    }
+
+    await this.record(newName, info);
+    return enabled ? newName : this.setEnabled(newName, false);
   }
 
   async setEnabled(fileName, enabled) {
@@ -316,4 +377,4 @@ function baseName(fileName) {
   return fileName.toLowerCase().endsWith(DISABLED_SUFFIX) ? fileName.slice(0, -'.disabled'.length) : fileName;
 }
 
-module.exports = { ModManager, baseName };
+module.exports = { ModManager, baseName, sha1OfFile };

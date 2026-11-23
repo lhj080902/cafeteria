@@ -215,3 +215,45 @@ test('Modrinth 에 연결하지 못하면 기록하지 않고 다음에 다시 �
   assert.equal(fetch.calls.length, 1, '다시 연결되면 물어본다');
   assert.deepEqual((await manager.readIndex()).files, { 'mod.jar': { source: 'local', lookedUp: true } });
 });
+
+test('같은 모드의 새 파일을 넣으면 예전 파일(켜진 것, 꺼진 것)을 새 파일로 바꾼다', async (t) => {
+  const manager = new ModManager(tempDir(t));
+  const inbox = tempDir(t);
+  makeJar(path.join(manager.modsDir, 'fastpack-0.3.0.jar'), { id: 'fastpack', name: 'FastPack', version: '0.3.0' });
+  makeJar(path.join(manager.modsDir, 'fastpack-0.2.0.jar.disabled'), { id: 'fastpack', name: 'FastPack', version: '0.2.0' });
+  makeJar(path.join(manager.modsDir, 'other-1.0.jar'), { id: 'other', name: '다른 모드', version: '1.0' });
+  await manager.record('fastpack-0.3.0.jar', { source: 'local' });
+
+  const result = await manager.addLocalFiles([makeJar(path.join(inbox, 'fastpack-0.3.1.jar'), { id: 'fastpack', name: 'FastPack', version: '0.3.1' })]);
+
+  assert.deepEqual(result.added, ['fastpack-0.3.1.jar']);
+  assert.deepEqual(result.rejected, []);
+  assert.deepEqual(
+    result.replaced.sort((a, b) => a.old.localeCompare(b.old)),
+    [
+      { old: 'fastpack-0.2.0.jar.disabled', new: 'fastpack-0.3.1.jar' },
+      { old: 'fastpack-0.3.0.jar', new: 'fastpack-0.3.1.jar' },
+    ],
+  );
+  assert.deepEqual((await manager.fileNames()).sort(), ['fastpack-0.3.1.jar', 'other-1.0.jar']);
+  assert.equal((await manager.readIndex()).files['fastpack-0.3.0.jar'], undefined);
+  assert.deepEqual((await manager.list()).map((mod) => `${mod.name} ${mod.version}`).sort(), ['FastPack 0.3.1', '다른 모드 1.0']);
+});
+
+test('같은 이름의 파일을 다시 넣으면 덮어쓰고, Cafeteria 모드는 따로 넣을 수 없다', async (t) => {
+  const manager = new ModManager(tempDir(t));
+  const inbox = tempDir(t);
+  makeJar(path.join(manager.modsDir, 'mymod.jar'), { id: 'mymod', name: '내 모드', version: '1.0' });
+  makeJar(path.join(manager.modsDir, 'cafeteria-client-1.2.0.jar'), { id: 'cafeteria', name: 'Cafeteria Client', version: '1.2.0' });
+
+  const result = await manager.addLocalFiles([
+    makeJar(path.join(inbox, 'mymod.jar'), { id: 'mymod', name: '내 모드', version: '2.0' }),
+    makeJar(path.join(inbox, 'my-cafeteria-build.jar'), { id: 'cafeteria', name: 'Cafeteria Client', version: '9.9.9' }),
+  ]);
+
+  assert.deepEqual(result.added, ['mymod.jar']);
+  assert.deepEqual(result.rejected, ['my-cafeteria-build.jar']);
+  assert.deepEqual(result.replaced, []);
+  assert.deepEqual((await manager.fileNames()).sort(), ['cafeteria-client-1.2.0.jar', 'mymod.jar']);
+  assert.equal((await manager.list()).find((mod) => mod.modId === 'mymod').version, '2.0');
+});

@@ -14,6 +14,8 @@ const state = {
   installButtons: new Map(),
   /** "설정 가져오기" 화면을 한 번이라도 불러왔는지 */
   importLoaded: false,
+  /** 마지막으로 확인한 모드 업데이트 (메인 프로세스가 알려 준 것) */
+  modUpdates: { updates: [], checked: 0, unknown: [], notes: [], checkedAt: null },
 };
 
 /** { ok, data } 응답에서 data 를 꺼낸다. 실패 응답이면 안내문을 담은 오류를 던진다. */
@@ -136,6 +138,7 @@ function renderState() {
   $('#setting-jvm-args').value = settings.jvmArgs;
   $('#setting-close').checked = settings.closeOnLaunch;
   $('#setting-auto-update').checked = settings.autoUpdate;
+  $('#setting-mod-update-check').checked = settings.modUpdateCheck;
   renderUpdate(info.update);
   $('#setting-game-dir').textContent = info.gameDir;
   $('#setting-launcher-path').textContent = settings.launcherPath || '자동으로 찾기';
@@ -382,16 +385,99 @@ async function refreshMods() {
     return;
   }
 
+  const updates = new Map(state.modUpdates.updates.map((update) => [update.fileName, update]));
+
   for (const mod of mods) {
-    list.append(modRow(mod));
+    list.append(modRow(mod, updates.get(mod.fileName)));
   }
 }
 
-function modRow(mod) {
+/* ── 모드 업데이트 ─────────────────────────────── */
+
+/** 사이드바의 숫자 표시와 "내 모드" 위쪽의 업데이트 안내를 그린다. */
+function renderModUpdates() {
+  const { updates, unknown, notes, checkedAt } = state.modUpdates;
+  const badge = $('#mods-update-badge');
+  badge.hidden = updates.length === 0;
+  badge.textContent = String(updates.length);
+
+  const lines = [...notes];
+
+  if (unknown.length > 0) {
+    const names = unknown.slice(0, 3).join(', ') + (unknown.length > 3 ? ` 외 ${unknown.length - 3}개` : '');
+    lines.push(`직접 넣은 모드(${names})는 모드 사이트에 없어서 확인할 수 없습니다. 새 jar 파일을 추가하면 예전 파일과 자동으로 바뀝니다.`);
+  }
+
+  $('#mods-update-bar').hidden = checkedAt === null || (updates.length === 0 && lines.length === 0);
+  $('#mods-update-summary').textContent = updates.length > 0 ? `새 버전이 나온 모드 ${updates.length}개` : '받은 모드는 모두 최신입니다';
+  $('#mods-update-note').textContent = lines.join('\n');
+  $('#mods-update-all').hidden = updates.length === 0;
+}
+
+async function checkModUpdates() {
+  const button = $('#mods-check-updates');
+  button.disabled = true;
+  button.textContent = '확인 중...';
+
+  try {
+    state.modUpdates = await unwrap(api.checkModUpdates());
+    renderModUpdates();
+    const { updates, checked } = state.modUpdates;
+    toast(updates.length > 0 ? `새 버전이 나온 모드가 ${updates.length}개 있습니다.` : `새 버전이 없습니다. (확인한 모드 ${checked}개)`, updates.length > 0 ? 'info' : 'success');
+  } catch (error) {
+    showError(error);
+  } finally {
+    button.disabled = false;
+    button.textContent = '업데이트 확인';
+    refreshMods();
+  }
+}
+
+function reportModUpdate(result) {
+  for (const warning of result.warnings || []) {
+    toast(warning, 'error');
+  }
+
+  if (result.installed && result.installed.length > 0) {
+    toast(`함께 필요한 모드를 설치했습니다: ${result.installed.join(', ')}`, 'info');
+  }
+}
+
+async function updateAllMods() {
+  const button = $('#mods-update-all');
+  button.disabled = true;
+  button.textContent = '업데이트 중...';
+
+  try {
+    const result = await unwrap(api.updateAllMods());
+
+    if (result.updated.length > 0) {
+      toast(`모드 ${result.updated.length}개를 업데이트했습니다:\n${result.updated.join('\n')}`, 'success');
+    }
+
+    if (result.failed.length > 0) {
+      toast(`업데이트하지 못한 모드:\n${result.failed.join('\n')}`, 'error');
+    }
+
+    reportModUpdate(result);
+  } catch (error) {
+    showError(error);
+  } finally {
+    button.disabled = false;
+    button.textContent = '모두 업데이트';
+    refreshMods();
+  }
+}
+
+function modRow(mod, update) {
   const title = el('div', { className: 'row-title', text: mod.name });
 
   if (mod.version) {
     title.append(el('span', { className: 'muted', text: `  ${mod.version}` }));
+  }
+
+  if (update) {
+    title.append(el('span', { className: 'chip small update', text: `새 버전 ${update.newVersion}`.trim() }));
   }
 
   const source = mod.builtin ? SOURCE_LABELS.builtin : SOURCE_LABELS[mod.source] || SOURCE_LABELS.local;
@@ -422,6 +508,35 @@ function modRow(mod) {
       },
     });
     toggle.checked = mod.enabled;
+
+    if (update) {
+      const updateButton = el('button', {
+        className: 'button primary',
+        text: '업데이트',
+        attrs: { type: 'button', title: `${update.currentVersion || '현재 버전'} → ${update.newVersion}` },
+        on: {
+          click: async () => {
+            updateButton.disabled = true;
+            updateButton.textContent = '받는 중...';
+            state.installButtons.set(`update:${mod.fileName}`, updateButton);
+
+            try {
+              const result = await unwrap(api.updateMod(mod.fileName));
+              toast(`${result.name} ${result.version} 업데이트 완료`, 'success');
+              reportModUpdate(result);
+            } catch (error) {
+              showError(error);
+            } finally {
+              state.installButtons.delete(`update:${mod.fileName}`);
+            }
+
+            refreshMods();
+          },
+        },
+      });
+      actions.append(updateButton);
+    }
+
     actions.append(
       el('label', { className: 'switch', attrs: { title: mod.enabled ? '끄기' : '켜기' } }, [toggle, el('span')]),
       el('button', {
@@ -456,8 +571,12 @@ function reportAdded(result) {
     toast(`모드 ${result.added.length}개를 추가했습니다.`, 'success');
   }
 
+  if (result.replaced && result.replaced.length > 0) {
+    toast(`같은 모드의 예전 파일을 새 파일로 바꿨습니다:\n${result.replaced.map((entry) => `${entry.old} → ${entry.new}`).join('\n')}`, 'info');
+  }
+
   if (result.rejected.length > 0) {
-    toast(`jar 파일이 아니라서 추가하지 않았습니다:\n${result.rejected.join('\n')}`, 'error');
+    toast(`추가하지 않았습니다 (jar 모드 파일이 아니거나, 런처가 관리하는 Cafeteria 모드):\n${result.rejected.join('\n')}`, 'error');
   }
 
   refreshMods();
@@ -633,6 +752,16 @@ function bindEvents() {
   $('#import-choose').addEventListener('click', chooseImportFolder);
 
   // 내 모드
+  api.onModUpdates((updates) => {
+    state.modUpdates = updates;
+    renderModUpdates();
+
+    if ($('#view-mods').classList.contains('active')) {
+      refreshMods();
+    }
+  });
+  $('#mods-check-updates').addEventListener('click', checkModUpdates);
+  $('#mods-update-all').addEventListener('click', updateAllMods);
   $('#mods-add').addEventListener('click', () => unwrap(api.addModFiles()).then(reportAdded).catch(showError));
   $('#mods-open-folder').addEventListener('click', () => unwrap(api.openModsFolder()).catch(showError));
 
@@ -716,6 +845,7 @@ function bindEvents() {
   $('#setting-reset-java').addEventListener('click', () => saveSettings({ javaPath: '' }));
   $('#setting-close').addEventListener('change', (event) => saveSettings({ closeOnLaunch: event.target.checked }));
   $('#setting-auto-update').addEventListener('change', (event) => saveSettings({ autoUpdate: event.target.checked }));
+  $('#setting-mod-update-check').addEventListener('change', (event) => saveSettings({ modUpdateCheck: event.target.checked }));
   $('#setting-open-logs').addEventListener('click', () => unwrap(api.openLogsFolder()).catch(showError));
 
   $('#setting-repair').addEventListener('click', async (event) => {
@@ -809,3 +939,10 @@ function bindEvents() {
 
 bindEvents();
 refreshState().catch(showError);
+// 런처를 켤 때 미리 확인해 둔 모드 업데이트가 있으면 표시한다.
+unwrap(api.getModUpdates())
+  .then((updates) => {
+    state.modUpdates = updates;
+    renderModUpdates();
+  })
+  .catch(showError);
