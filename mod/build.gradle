@@ -1,0 +1,72 @@
+plugins {
+	id 'fabric-loom' version "${loom_version}"
+}
+
+version = "${project.mod_version}+${project.minecraft_version}"
+group = project.maven_group
+
+base {
+	archivesName = project.archives_base_name
+}
+
+// 실제 클라이언트를 띄워서 모듈 동작을 확인하는 자동 테스트 (./gradlew runClientGameTest)
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = "cafeteria-test"
+		enableGameTests = false
+		enableClientGameTests = true
+		eula = true
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	mappings loom.officialMojangMappings()
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// 배포 환경 테스트(runProductionClientGameTest)에 같이 넣을 모드
+	productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+// 배포용 jar 를 실제 마인크래프트 + Fabric Loader(유저가 쓰는 환경과 같은 구성)에 올려서 같은 테스트를 돌린다.
+// 개발 환경에서는 통과하는데 배포 jar 에서만 깨지는 문제(믹스인 리맵 등)를 잡기 위한 것.
+def gametestJar = tasks.register("gametestJar", Jar) {
+	from sourceSets.gametest.output
+	archiveClassifier = "gametest-dev"
+	destinationDirectory = layout.buildDirectory.dir("devlibs")
+}
+
+def remapGametestJar = tasks.register("remapGametestJar", net.fabricmc.loom.task.RemapJarTask) {
+	inputFile = gametestJar.flatMap { it.archiveFile }
+	classpath.from(sourceSets.gametest.compileClasspath)
+	archiveClassifier = "gametest"
+	destinationDirectory = layout.buildDirectory.dir("devlibs")
+	addNestedDependencies = false
+}
+
+tasks.register("runProductionClientGameTest", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+	mods.from(remapGametestJar)
+	jvmArgs.add("-Dfabric.client.gametest")
+	runDir = layout.buildDirectory.dir("run/productionClientGameTest")
+}
+
+processResources {
+	def modVersion = project.version
+	inputs.property "version", modVersion
+
+	filesMatching("fabric.mod.json") {
+		expand "version": modVersion
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 21
+	it.options.encoding = "UTF-8"
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}

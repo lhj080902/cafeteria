@@ -1,0 +1,14 @@
+{
+	"schemaVersion": 1,
+	"id": "cafeteria-test",
+	"version": "1.0.0",
+	"name": "Cafeteria Client Test",
+	"description": "Cafeteria Client 자동 테스트 (배포 파일에는 포함되지 않음)",
+	"environment": "client",
+	"entrypoints": {
+		"fabric-client-gametest": ["io.github.lhj080902.cafeteria.test.CafeteriaClientGameTest"]
+	},
+	"depends": {
+		"cafeteria": "*"
+	}
+}

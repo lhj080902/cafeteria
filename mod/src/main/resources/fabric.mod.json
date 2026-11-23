@@ -1,0 +1,21 @@
+{
+	"schemaVersion": 1,
+	"id": "cafeteria",
+	"version": "${version}",
+	"name": "Cafeteria Client",
+	"description": "카페테리아 PvP 클라이언트 - 프리룩, 줌, 히트박스, HUD",
+	"authors": ["Cafeteria"],
+	"license": "All-Rights-Reserved",
+	"icon": "assets/cafeteria/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["io.github.lhj080902.cafeteria.CafeteriaClient"]
+	},
+	"mixins": ["cafeteria.mixins.json"],
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "1.21.4",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

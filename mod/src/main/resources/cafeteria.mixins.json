@@ -1,0 +1,16 @@
+{
+	"required": true,
+	"package": "io.github.lhj080902.cafeteria.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"CameraMixin",
+		"EntityRenderDispatcherMixin",
+		"GameRendererMixin",
+		"LightTextureMixin",
+		"MinecraftMixin",
+		"MouseHandlerMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

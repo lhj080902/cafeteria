@@ -1,0 +1,16 @@
+# Gradle / Loom
+.gradle/
+build/
+run/
+out/
+*.iml
+.idea/
+.vscode/
+
+# Node / Electron
+node_modules/
+launcher/dist/
+launcher/resources/mods/*.jar
+
+# 산출물
+/dist/
