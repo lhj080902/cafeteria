@@ -863,11 +863,110 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(withHand - withoutHand == 17, "손에 든 아이템 줄 높이가 예상과 다릅니다: " + withHand + " → " + withoutHand);
 		context.runOnClient(minecraft -> Modules.ARMOR.mainHand.set(true));
 		context.takeScreenshot("status-huds");
+		testPotionIcons(context, server);
 
 		server.runCommand("effect clear @a");
 		server.runCommand("item replace entity @a weapon.mainhand with minecraft:air");
 		context.runOnClient(minecraft -> Modules.COORDINATES.setEnabled(false));
 		context.waitTicks(5);
+	}
+
+	/**
+	 * 포션 효과 HUD: 효과 아이콘이 이름·시간 옆에 그려지고, 아이콘을 끄면 글자만 남는다.
+	 * "기본 아이콘 숨김"을 켜면 화면 오른쪽 위의 바닐라 효과 아이콘이 사라진다.
+	 * 속도 II·힘 효과가 걸려 있는 상태에서 부른다. 배경색이 비교에 섞이지 않도록 실명 효과로 화면을 검게 만든 뒤에 잰다.
+	 */
+	private static void testPotionIcons(ClientGameTestContext context, TestServerContext server) {
+		check(Modules.POTIONS.icons.get(), "효과 아이콘은 기본으로 켜져 있어야 합니다");
+		server.runCommand("effect give @a minecraft:blindness 120 0 true");
+		context.waitTicks(50);
+		// 발전 과제 알림이 오른쪽 위를 가리지 않게 치우고, 다른 HUD 도 잠시 끈다.
+		List<HudElement> others = context.computeOnClient(minecraft -> Modules.HUD.stream().filter(element -> element.isEnabled() && element != Modules.POTIONS).toList());
+		int[] area = context.computeOnClient(minecraft -> {
+			minecraft.getToastManager().clear();
+			others.forEach(element -> element.setEnabled(false));
+			int width = minecraft.getWindow().getGuiScaledWidth();
+			int height = minecraft.getWindow().getGuiScaledHeight();
+			// 미니맵 모드가 있어도 겹치지 않는 화면 위쪽 가운데 근처에 둔다.
+			Modules.POTIONS.setPosition(minecraft, 150, 20, width, height);
+			int scale = (int) minecraft.getWindow().getGuiScale();
+			return new int[] {Modules.POTIONS.x(minecraft, width) * scale, Modules.POTIONS.y(minecraft, height) * scale, scale};
+		});
+		int scale = area[2];
+		int withIconsHeight = context.computeOnClient(Modules.POTIONS::height);
+		check(withIconsHeight == 3 * 20 + 6 - 2, "아이콘을 켠 포션 HUD 의 높이가 예상과 다릅니다: " + withIconsHeight);
+		context.waitTicks(3);
+		BufferedImage withIcons = readImage(context.takeScreenshot("potion-icons"));
+
+		context.runOnClient(minecraft -> Modules.POTIONS.icons.set(false));
+		check(context.computeOnClient(Modules.POTIONS::height) == 3 * 10 + 6 - 1, "아이콘을 끈 포션 HUD 의 높이가 예상과 다릅니다");
+		context.waitTicks(3);
+		BufferedImage withoutIcons = readImage(context.takeScreenshot("potion-text-only"));
+
+		// 아이콘 자리(HUD 왼쪽의 18픽셀 폭, 세 줄)에 색이 있는 그림이 그려졌는지 본다. 글자와 배경은 무채색이다.
+		int iconsOn = colorfulPixels(withIcons, area[0] + 3 * scale, area[1] + 3 * scale, 18 * scale, 58 * scale);
+		int iconsOff = colorfulPixels(withoutIcons, area[0] + 3 * scale, area[1] + 3 * scale, 18 * scale, 58 * scale);
+		// 바닐라 효과 아이콘(오른쪽 위)은 기본으로 그대로 둔다.
+		int vanillaShown = brightPixels(withoutIcons, withoutIcons.getWidth() - 80 * scale, 0, 80 * scale, 52 * scale);
+
+		context.runOnClient(minecraft -> {
+			Modules.POTIONS.icons.reset();
+			Modules.POTIONS.hideVanilla.set(true);
+		});
+		context.waitTicks(3);
+		BufferedImage hidden = readImage(context.takeScreenshot("potion-vanilla-hidden"));
+		int vanillaHidden = brightPixels(hidden, hidden.getWidth() - 80 * scale, 0, 80 * scale, 52 * scale);
+
+		context.runOnClient(minecraft -> {
+			Modules.POTIONS.hideVanilla.reset();
+			Modules.POTIONS.resetPosition();
+			others.forEach(element -> element.setEnabled(true));
+		});
+		server.runCommand("effect clear @a minecraft:blindness");
+		context.waitTicks(40);
+
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 포션 아이콘 자리의 색 있는 픽셀 — 아이콘 켬 {}, 끔 {} / 오른쪽 위 바닐라 아이콘의 밝은 픽셀 — 기본 {}, 숨김 {}",
+			iconsOn, iconsOff, vanillaShown, vanillaHidden);
+		check(iconsOn > 150, "효과 아이콘이 그려지지 않았습니다: " + iconsOn + "픽셀");
+		check(iconsOff < iconsOn / 5, "아이콘을 껐는데도 아이콘 자리에 그림이 있습니다: " + iconsOff + "픽셀");
+		check(vanillaShown > 500, "바닐라 효과 아이콘이 보이지 않아 비교할 수 없습니다: " + vanillaShown);
+		check(vanillaHidden < vanillaShown / 10, "기본 아이콘 숨김을 켰는데 바닐라 아이콘이 남아 있습니다: " + vanillaHidden);
+	}
+
+	/** 영역 안에서 채도가 뚜렷한(무채색이 아닌) 픽셀 수. */
+	private static int colorfulPixels(BufferedImage image, int left, int top, int width, int height) {
+		int count = 0;
+
+		for (int y = Math.max(0, top); y < Math.min(image.getHeight(), top + height); y++) {
+			for (int x = Math.max(0, left); x < Math.min(image.getWidth(), left + width); x++) {
+				int rgb = image.getRGB(x, y);
+				int max = Math.max(rgb >> 16 & 0xFF, Math.max(rgb >> 8 & 0xFF, rgb & 0xFF));
+				int min = Math.min(rgb >> 16 & 0xFF, Math.min(rgb >> 8 & 0xFF, rgb & 0xFF));
+
+				if (max > 90 && max - min > max * 0.3) {
+					count++;
+				}
+			}
+		}
+
+		return count;
+	}
+
+	/** 영역 안에서 어둡지 않은 픽셀 수. */
+	private static int brightPixels(BufferedImage image, int left, int top, int width, int height) {
+		int count = 0;
+
+		for (int y = Math.max(0, top); y < Math.min(image.getHeight(), top + height); y++) {
+			for (int x = Math.max(0, left); x < Math.min(image.getWidth(), left + width); x++) {
+				int rgb = image.getRGB(x, y);
+
+				if (Math.max(rgb >> 16 & 0xFF, Math.max(rgb >> 8 & 0xFF, rgb & 0xFF)) > 70) {
+					count++;
+				}
+			}
+		}
+
+		return count;
 	}
 
 	/**

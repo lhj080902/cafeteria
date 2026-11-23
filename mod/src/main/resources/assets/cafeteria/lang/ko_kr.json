@@ -69,7 +69,7 @@
 	"cafeteria.module.armor": "갑옷 상태",
 	"cafeteria.module.armor.desc": "갑옷·무기 내구도 표시",
 	"cafeteria.module.potions": "포션 효과",
-	"cafeteria.module.potions.desc": "효과와 남은 시간 표시",
+	"cafeteria.module.potions.desc": "효과 아이콘과 남은 시간",
 	"cafeteria.module.combo": "콤보 표시",
 	"cafeteria.module.combo.desc": "연속 적중 횟수 표시",
 	"cafeteria.module.reach": "리치 표시",
@@ -112,5 +112,7 @@
 	"cafeteria.screenshot.folder.hint": "스크린샷 폴더 열기",
 	"cafeteria.screenshot.copied": "스크린샷을 클립보드에 복사했습니다",
 	"cafeteria.screenshot.copy_failed": "스크린샷을 복사하지 못했습니다: %s",
-	"cafeteria.screenshot.not_found": "그 스크린샷 파일을 찾을 수 없습니다"
+	"cafeteria.screenshot.not_found": "그 스크린샷 파일을 찾을 수 없습니다",
+	"cafeteria.setting.potion_icons": "효과 아이콘",
+	"cafeteria.setting.potion_hide_vanilla": "기본 아이콘 숨김"
 }

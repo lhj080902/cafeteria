@@ -69,7 +69,7 @@
 	"cafeteria.module.armor": "Armor Status",
 	"cafeteria.module.armor.desc": "Show armor durability",
 	"cafeteria.module.potions": "Potion Effects",
-	"cafeteria.module.potions.desc": "Show effects and time left",
+	"cafeteria.module.potions.desc": "Effect icons and time left",
 	"cafeteria.module.combo": "Combo",
 	"cafeteria.module.combo.desc": "Show consecutive hits",
 	"cafeteria.module.reach": "Reach",
@@ -112,5 +112,7 @@
 	"cafeteria.screenshot.folder.hint": "Open the screenshots folder",
 	"cafeteria.screenshot.copied": "Screenshot copied to the clipboard",
 	"cafeteria.screenshot.copy_failed": "Could not copy the screenshot: %s",
-	"cafeteria.screenshot.not_found": "That screenshot file was not found"
+	"cafeteria.screenshot.not_found": "That screenshot file was not found",
+	"cafeteria.setting.potion_icons": "Effect icons",
+	"cafeteria.setting.potion_hide_vanilla": "Hide vanilla icons"
 }

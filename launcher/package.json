@@ -1,7 +1,7 @@
 {
   "name": "cafeteria-launcher",
   "productName": "Cafeteria",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "카페테리아 - Minecraft 1.21.4 PvP 클라이언트 런처",
   "author": "Cafeteria",
   "private": true,
