@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://cdn.modrinth.com https://media.forgecdn.net">
+  <title>Cafeteria</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div class="titlebar-brand">
+      <img src="assets/logo.png" alt="">
+      <span>Cafeteria</span>
+    </div>
+    <div class="titlebar-controls">
+      <button id="window-minimize" type="button" aria-label="최소화" title="최소화">&#x2013;</button>
+      <button id="window-close" type="button" class="close" aria-label="닫기" title="닫기">&#x2715;</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" aria-label="메뉴">
+      <button type="button" class="nav-item active" data-view="home">홈</button>
+      <button type="button" class="nav-item" data-view="mods">내 모드</button>
+      <button type="button" class="nav-item" data-view="browse">모드 찾기</button>
+      <button type="button" class="nav-item" data-view="settings">설정</button>
+      <div class="sidebar-footer">
+        <div id="version-label">Minecraft</div>
+        <div id="app-version-label" class="muted"></div>
+      </div>
+    </nav>
+
+    <main class="content">
+      <!-- 홈 -->
+      <section id="view-home" class="view active">
+        <div class="hero">
+          <img class="hero-logo" src="assets/logo.png" alt="">
+          <div>
+            <h1>Cafeteria Client</h1>
+            <p id="hero-subtitle" class="muted">Minecraft · Fabric</p>
+          </div>
+          <span id="install-status" class="chip">확인 중</span>
+        </div>
+
+        <h2>포함된 PvP 기능</h2>
+        <div class="feature-grid">
+          <div class="feature"><strong>프리룩</strong><span>캐릭터 방향은 그대로 두고 시점만 360° 회전</span><kbd>왼쪽 Alt</kbd></div>
+          <div class="feature"><strong>줌</strong><span>누르는 동안 확대, 휠로 배율 조절</span><kbd>C</kbd></div>
+          <div class="feature"><strong>히트박스</strong><span>색상·대상 설정, 피격 시 색 변경</span><kbd>항상 표시</kbd></div>
+          <div class="feature"><strong>HUD</strong><span>FPS · CPS · 핑 · 키스트로크</span><kbd>위치 이동 가능</kbd></div>
+          <div class="feature"><strong>풀브라이트</strong><span>어두운 곳을 밝게 표시</span><kbd>기본 꺼짐</kbd></div>
+          <div class="feature"><strong>모드 설정 메뉴</strong><span>게임 안에서 기능을 켜고 끄기</span><kbd>오른쪽 Shift</kbd></div>
+        </div>
+
+        <div id="launcher-missing" class="notice error" hidden>공식 Minecraft 런처를 찾을 수 없습니다. Cafeteria는 로그인과 게임 실행을 공식 런처에 맡기기 때문에, 공식 런처를 설치하고 한 번 실행(로그인)해 두어야 합니다.
+<a href="#" data-external="https://www.minecraft.net/download">공식 런처 받으러 가기</a></div>
+        <div id="home-notice" class="notice" hidden></div>
+
+        <div class="play-bar">
+          <div class="play-status">
+            <div id="play-message">플레이를 누르면 설치를 확인하고 공식 Minecraft 런처를 엽니다.</div>
+            <div class="progress" id="play-progress" hidden><div class="progress-fill" id="play-progress-fill"></div></div>
+          </div>
+          <button id="play-button" type="button" class="button primary large">플레이</button>
+        </div>
+      </section>
+
+      <!-- 내 모드 -->
+      <section id="view-mods" class="view">
+        <div class="view-header">
+          <div>
+            <h1>내 모드</h1>
+            <p class="muted">여기에 넣은 모드는 Cafeteria 프로필에서만 쓰입니다. jar 파일을 끌어다 놓아도 됩니다.</p>
+          </div>
+          <div class="actions">
+            <button id="mods-open-folder" type="button" class="button">폴더 열기</button>
+            <button id="mods-add" type="button" class="button primary">모드 파일 추가</button>
+          </div>
+        </div>
+        <div id="mods-list" class="list"></div>
+        <div id="drop-overlay" class="drop-overlay" hidden>여기에 놓으면 모드가 추가됩니다</div>
+      </section>
+
+      <!-- 모드 찾기 -->
+      <section id="view-browse" class="view">
+        <div class="view-header">
+          <div>
+            <h1>모드 찾기</h1>
+            <p id="browse-subtitle" class="muted">Minecraft · Fabric용 모드만 보여 줍니다.</p>
+          </div>
+          <div class="segmented" role="tablist" aria-label="모드 사이트">
+            <button type="button" class="segment active" data-source="modrinth" role="tab">Modrinth</button>
+            <button type="button" class="segment" data-source="curseforge" role="tab">CurseForge</button>
+          </div>
+        </div>
+        <form id="browse-form" class="search">
+          <input id="browse-query" type="search" placeholder="모드 이름으로 검색 (비워 두면 인기순)" autocomplete="off" spellcheck="false">
+          <button type="submit" class="button primary">검색</button>
+        </form>
+        <div id="browse-results" class="list"></div>
+        <div class="browse-more">
+          <button id="browse-more" type="button" class="button" hidden>더 보기</button>
+        </div>
+      </section>
+
+      <!-- 설정 -->
+      <section id="view-settings" class="view">
+        <div class="view-header">
+          <div>
+            <h1>설정</h1>
+            <p class="muted">바꾼 내용은 바로 저장되고, 다음에 플레이를 누를 때 게임에 적용됩니다.</p>
+          </div>
+        </div>
+
+        <h2 class="first">게임</h2>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>메모리 (RAM)</strong>
+            <span class="muted">게임에 줄 최대 메모리. PvP만 한다면 4GB면 충분합니다.</span>
+          </div>
+          <div class="setting-control">
+            <input id="setting-memory" type="range" min="2" max="16" step="1" aria-label="메모리">
+            <output id="setting-memory-value">4 GB</output>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>게임 창 크기</strong>
+            <span class="muted">끄면 마인크래프트 기본 크기로 열립니다.</span>
+          </div>
+          <div class="setting-control">
+            <input id="setting-resolution-width" type="number" min="640" max="7680" step="1" aria-label="가로">
+            <span class="muted">×</span>
+            <input id="setting-resolution-height" type="number" min="360" max="4320" step="1" aria-label="세로">
+            <label class="switch"><input id="setting-resolution-enabled" type="checkbox" aria-label="게임 창 크기 직접 지정"><span></span></label>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>Java 실행 파일</strong>
+            <span id="setting-java-path" class="muted path"></span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-reset-java" type="button" class="button">자동</button>
+            <button id="setting-choose-java" type="button" class="button">직접 지정</button>
+          </div>
+        </div>
+
+        <div class="setting column">
+          <div class="setting-text">
+            <strong>추가 JVM 인수</strong>
+            <span class="muted">잘 모르면 비워 두세요. 기본 옵션 뒤에 그대로 덧붙습니다.</span>
+          </div>
+          <input id="setting-jvm-args" type="text" placeholder="예: -XX:+AlwaysPreTouch" autocomplete="off" spellcheck="false" maxlength="1000">
+        </div>
+
+        <h2>런처</h2>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>플레이 후 런처 닫기</strong>
+            <span class="muted">공식 런처가 열리면 Cafeteria 런처를 자동으로 닫습니다.</span>
+          </div>
+          <div class="setting-control">
+            <label class="switch"><input id="setting-close" type="checkbox" aria-label="플레이 후 런처 닫기"><span></span></label>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>게임 폴더</strong>
+            <span id="setting-game-dir" class="muted path"></span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-open-game-dir" type="button" class="button">열기</button>
+            <button id="setting-choose-game-dir" type="button" class="button">변경</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>공식 Minecraft 런처 위치</strong>
+            <span id="setting-launcher-path" class="muted path"></span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-reset-launcher" type="button" class="button">자동</button>
+            <button id="setting-choose-launcher" type="button" class="button">직접 지정</button>
+          </div>
+        </div>
+
+        <h2>모드 사이트</h2>
+
+        <div class="setting column">
+          <div class="setting-text">
+            <strong>CurseForge API 키 <span id="curseforge-key-state" class="chip small">미설정</span></strong>
+            <span class="muted">CurseForge 모드 검색·다운로드에 필요합니다. 키는 이 PC에만 저장되며 약관상 다른 사람과 공유하면 안 됩니다.
+              <a href="#" data-external="https://support.curseforge.com/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key">발급 방법 보기</a></span>
+          </div>
+          <form id="curseforge-form" class="key-form">
+            <input id="curseforge-key" type="password" placeholder="API 키 붙여넣기" autocomplete="off" spellcheck="false">
+            <button type="submit" class="button primary">저장</button>
+            <button id="curseforge-clear" type="button" class="button">삭제</button>
+          </form>
+        </div>
+
+        <h2>관리</h2>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>설치 복구</strong>
+            <span class="muted">게임이 실행되지 않을 때: Fabric 정보, Cafeteria 모드, 프로필을 다시 설치합니다. 내 모드와 월드는 그대로입니다.</span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-repair" type="button" class="button">복구</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>로그 폴더</strong>
+            <span class="muted">게임이 튕겼을 때 원인을 확인할 수 있는 기록(latest.log)이 들어 있습니다.</span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-open-logs" type="button" class="button">열기</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>Cafeteria 프로필 제거</strong>
+            <span class="muted">공식 런처에서 Cafeteria 프로필만 지웁니다. 게임 폴더(모드, 설정, 월드)는 지우지 않습니다.</span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-remove-profile" type="button" class="button danger">제거</button>
+          </div>
+        </div>
+
+        <div class="setting last">
+          <div class="setting-text">
+            <strong>설정 초기화</strong>
+            <span class="muted">메모리, 창 크기, JVM 인수 등을 기본값으로 되돌립니다. 게임 폴더 위치와 CurseForge 키는 유지됩니다.</span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-reset" type="button" class="button danger">초기화</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

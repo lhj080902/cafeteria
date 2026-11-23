@@ -1,7 +1,7 @@
 """카페테리아 아이콘 생성 스크립트.
 
 사용법: python3 tools/make_icon.py
-결과물: branding/icon.png (512px), branding/icon.ico, 모드 아이콘(128px)
+결과물: branding/icon.png (512px), branding/icon.ico, 모드 아이콘(128px), 런처 아이콘들
 """
 from pathlib import Path
 
@@ -50,6 +50,16 @@ def main() -> None:
     mod_icon = ROOT / "mod" / "src" / "main" / "resources" / "assets" / "cafeteria" / "icon.png"
     mod_icon.parent.mkdir(parents=True, exist_ok=True)
     icon.resize((128, 128), Image.LANCZOS).save(mod_icon)
+
+    # 런처: 창/설치 파일 아이콘, 공식 런처 프로필 아이콘, 화면에 쓰는 로고
+    resources = ROOT / "launcher" / "resources"
+    resources.mkdir(parents=True, exist_ok=True)
+    icon.resize((512, 512), Image.LANCZOS).save(resources / "icon.png")
+    (resources / "icon.ico").write_bytes((branding / "icon.ico").read_bytes())
+    icon.resize((128, 128), Image.LANCZOS).save(resources / "profile-icon.png")
+    logo = ROOT / "launcher" / "src" / "renderer" / "assets" / "logo.png"
+    logo.parent.mkdir(parents=True, exist_ok=True)
+    icon.resize((128, 128), Image.LANCZOS).save(logo)
     print("아이콘 생성 완료:", branding / "icon.png")
 
 

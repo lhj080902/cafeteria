@@ -14,3 +14,6 @@ launcher/resources/mods/*.jar
 
 # 산출물
 /dist/
+
+# 런처 E2E 테스트 스크린샷
+launcher/test/e2e/output/

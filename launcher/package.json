@@ -1,0 +1,64 @@
+{
+  "name": "cafeteria-launcher",
+  "productName": "Cafeteria",
+  "version": "1.0.0",
+  "description": "카페테리아 - Minecraft 1.21.4 PvP 클라이언트 런처",
+  "author": "Cafeteria",
+  "private": true,
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "node scripts/copy-mod.js && electron .",
+    "copy-mod": "node scripts/copy-mod.js",
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:e2e": "node test/e2e/run.js",
+    "build:win": "node scripts/copy-mod.js && electron-builder --win zip --x64",
+    "build:win:installer": "node scripts/copy-mod.js && electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "adm-zip": "0.6.1"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0",
+    "resedit": "3.1.1"
+  },
+  "build": {
+    "appId": "io.github.lhj080902.cafeteria",
+    "productName": "Cafeteria",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": ".",
+        "filter": [
+          "icon.png",
+          "profile-icon.png",
+          "mods/*.jar"
+        ]
+      }
+    ],
+    "afterPack": "scripts/after-pack.js",
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "resources/icon.ico",
+      "signAndEditExecutable": false,
+      "artifactName": "Cafeteria-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Cafeteria",
+      "artifactName": "Cafeteria-Setup-${version}.${ext}"
+    }
+  }
+}

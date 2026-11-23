@@ -1,0 +1,237 @@
+'use strict';
+
+const fsp = require('node:fs/promises');
+const path = require('node:path');
+const AdmZip = require('adm-zip');
+const { BUILTIN_MOD_IDS } = require('./constants');
+const { LauncherError } = require('./errors');
+const { exists, readJson, writeFileAtomic } = require('./fs-util');
+
+const ENABLED_SUFFIX = '.jar';
+const DISABLED_SUFFIX = '.jar.disabled';
+const FILE_NAME_PATTERN = /^[^\\/:*?"<>|\u0000-\u001f]+\.jar(\.disabled)?$/i;
+/** 목록에 보여 줄 모드 아이콘의 최대 크기. 이보다 큰 이미지는 무시한다. */
+const MAX_ICON_BYTES = 256 * 1024;
+
+/**
+ * 게임 폴더의 mods 폴더를 관리한다.
+ * - 켜진 모드는 "이름.jar", 꺼진 모드는 "이름.jar.disabled" 로 둔다 (Fabric 은 .jar 만 읽는다).
+ * - 런처로 받은 모드의 출처(Modrinth/CurseForge 프로젝트 ID)는 cafeteria-mods.json 에 기록해서
+ *   "이미 설치됨" 표시와 의존성 중복 설치 방지에 쓴다.
+ */
+class ModManager {
+  constructor(gameDir) {
+    this.gameDir = gameDir;
+    this.modsDir = path.join(gameDir, 'mods');
+    this.indexFile = path.join(gameDir, 'cafeteria-mods.json');
+    this.metadataCache = new Map();
+  }
+
+  /** 화면에서 넘어온 파일 이름이 mods 폴더 안의 모드 파일을 가리키는지 확인하고 전체 경로를 돌려준다. */
+  resolve(fileName) {
+    if (typeof fileName !== 'string' || fileName !== path.basename(fileName) || !FILE_NAME_PATTERN.test(fileName)) {
+      throw new LauncherError('BAD_FILE_NAME', '올바르지 않은 모드 파일 이름입니다.');
+    }
+
+    return path.join(this.modsDir, fileName);
+  }
+
+  async readIndex() {
+    const index = await readJson(this.indexFile, {});
+    return index && typeof index.files === 'object' && index.files !== null ? index : { files: {} };
+  }
+
+  /** 다운로드한 파일의 출처를 기록한다. */
+  async record(fileName, info) {
+    const index = await this.readIndex();
+    index.files[baseName(fileName)] = info;
+    await writeFileAtomic(this.indexFile, JSON.stringify(index, null, 2));
+  }
+
+  async forget(fileName) {
+    const index = await this.readIndex();
+
+    if (index.files[baseName(fileName)]) {
+      delete index.files[baseName(fileName)];
+      await writeFileAtomic(this.indexFile, JSON.stringify(index, null, 2));
+    }
+  }
+
+  /** 지금 mods 폴더에 있는 파일 중 주어진 출처에서 받은 프로젝트 ID 목록. */
+  async installedProjects(source) {
+    const index = await this.readIndex();
+    const present = new Set((await this.fileNames()).map(baseName));
+    const projects = new Set();
+
+    for (const [name, info] of Object.entries(index.files)) {
+      if (present.has(name) && info && info.source === source && info.projectId) {
+        projects.add(String(info.projectId));
+      }
+    }
+
+    return projects;
+  }
+
+  async fileNames() {
+    let entries;
+
+    try {
+      entries = await fsp.readdir(this.modsDir, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return [];
+      }
+
+      throw error;
+    }
+
+    return entries
+      .filter((entry) => entry.isFile() && FILE_NAME_PATTERN.test(entry.name))
+      .map((entry) => entry.name);
+  }
+
+  async list() {
+    const index = await this.readIndex();
+    const mods = [];
+
+    for (const fileName of await this.fileNames()) {
+      const file = path.join(this.modsDir, fileName);
+      const stat = await fsp.stat(file);
+      const metadata = this.readMetadata(file, stat);
+      const info = index.files[baseName(fileName)] || {};
+
+      mods.push({
+        fileName,
+        enabled: !fileName.toLowerCase().endsWith(DISABLED_SUFFIX),
+        size: stat.size,
+        modId: metadata.id,
+        name: metadata.name || info.title || baseName(fileName),
+        version: metadata.version,
+        description: metadata.description,
+        icon: metadata.icon || null,
+        source: info.source || 'local',
+        builtin: BUILTIN_MOD_IDS.includes(metadata.id),
+      });
+    }
+
+    // 기본 모드를 맨 위에, 나머지는 이름순으로
+    return mods.sort((a, b) => Number(b.builtin) - Number(a.builtin) || a.name.localeCompare(b.name, 'ko'));
+  }
+
+  /** jar 안의 fabric.mod.json 에서 이름과 버전을 읽는다. 읽을 수 없는 파일은 빈 정보로 취급한다. */
+  readMetadata(file, stat) {
+    const cacheKey = `${file}|${stat.size}|${stat.mtimeMs}`;
+
+    if (this.metadataCache.has(cacheKey)) {
+      return this.metadataCache.get(cacheKey);
+    }
+
+    let metadata = {};
+
+    try {
+      const zip = new AdmZip(file);
+      const entry = zip.getEntry('fabric.mod.json');
+
+      if (entry) {
+        const json = JSON.parse(entry.getData().toString('utf8'));
+        metadata = {
+          id: typeof json.id === 'string' ? json.id : undefined,
+          name: typeof json.name === 'string' ? json.name : undefined,
+          version: typeof json.version === 'string' ? json.version : undefined,
+          description: typeof json.description === 'string' ? json.description : undefined,
+          icon: readIcon(zip, json.icon),
+        };
+      }
+    } catch {
+      // 손상된 jar 이거나 Fabric 모드가 아닌 파일: 목록에는 파일 이름으로만 보여 준다.
+    }
+
+    this.metadataCache.set(cacheKey, metadata);
+    return metadata;
+  }
+
+  /** PC에 있는 jar 파일을 mods 폴더로 복사한다. 추가된 파일 이름 목록을 돌려준다. */
+  async addLocalFiles(filePaths) {
+    await fsp.mkdir(this.modsDir, { recursive: true });
+    const added = [];
+    const rejected = [];
+
+    for (const source of filePaths) {
+      const fileName = typeof source === 'string' ? path.basename(source) : '';
+      const stat = fileName ? await fsp.stat(source).catch(() => null) : null;
+
+      if (!stat || !stat.isFile() || !fileName.toLowerCase().endsWith(ENABLED_SUFFIX) || !FILE_NAME_PATTERN.test(fileName)) {
+        rejected.push(fileName || String(source));
+        continue;
+      }
+
+      const destination = path.join(this.modsDir, fileName);
+
+      if (path.resolve(source) !== path.resolve(destination)) {
+        await fsp.copyFile(source, destination);
+        // 같은 모드가 꺼진 상태로 남아 있으면 지워서 한 벌만 남긴다.
+        await fsp.rm(`${destination}.disabled`, { force: true });
+      }
+
+      await this.record(fileName, { source: 'local' });
+      added.push(fileName);
+    }
+
+    return { added, rejected };
+  }
+
+  async setEnabled(fileName, enabled) {
+    const current = this.resolve(fileName);
+    await this.assertNotBuiltin(current);
+    const base = baseName(fileName);
+    const target = path.join(this.modsDir, enabled ? base : `${base}.disabled`);
+
+    if (current !== target) {
+      await fsp.rm(target, { force: true });
+      await fsp.rename(current, target);
+    }
+
+    return path.basename(target);
+  }
+
+  async remove(fileName) {
+    const file = this.resolve(fileName);
+    await this.assertNotBuiltin(file);
+    await fsp.rm(file, { force: true });
+    await this.forget(fileName);
+  }
+
+  async assertNotBuiltin(file) {
+    if (!(await exists(file))) {
+      throw new LauncherError('MOD_NOT_FOUND', '모드 파일을 찾을 수 없습니다. 목록을 새로 고쳐 주세요.');
+    }
+
+    const metadata = this.readMetadata(file, await fsp.stat(file));
+
+    if (BUILTIN_MOD_IDS.includes(metadata.id)) {
+      throw new LauncherError('BUILTIN_MOD', '카페테리아 기본 모드는 끄거나 지울 수 없습니다.');
+    }
+  }
+}
+
+/** fabric.mod.json 의 icon 항목이 가리키는 PNG 를 data URI 로 읽는다. 없거나 너무 크면 undefined. */
+function readIcon(zip, iconPath) {
+  if (typeof iconPath !== 'string' || !iconPath.toLowerCase().endsWith('.png')) {
+    return undefined;
+  }
+
+  const entry = zip.getEntry(iconPath.replace(/^\.?\//, ''));
+
+  if (!entry || entry.isDirectory || entry.header.size > MAX_ICON_BYTES) {
+    return undefined;
+  }
+
+  return `data:image/png;base64,${entry.getData().toString('base64')}`;
+}
+
+/** "이름.jar.disabled" → "이름.jar" */
+function baseName(fileName) {
+  return fileName.toLowerCase().endsWith(DISABLED_SUFFIX) ? fileName.slice(0, -'.disabled'.length) : fileName;
+}
+
+module.exports = { ModManager, baseName };
