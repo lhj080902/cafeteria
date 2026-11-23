@@ -25,12 +25,16 @@ public abstract class GameRendererMixin {
 		return fov / Modules.ZOOM.currentFactor();
 	}
 
-	/** 줌 중 손 숨기기: 설정을 켜 두면 확대하는 동안 1인칭 손과 아이템을 그리지 않는다. */
+	/**
+	 * 줌 중 손 숨기기: 설정을 켜 두면 확대하는 동안 1인칭 손과 아이템을 그리지 않는다.
+	 * 셰이더 모드처럼 손 그리기를 통째로 바꾸는 모드와 함께 쓰면 적용되지 않을 수 있으므로 필수로 두지 않는다.
+	 */
 	@WrapWithCondition(
 		method = "renderItemInHand",
 		at = @At(
 			value = "INVOKE",
-			target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;Lnet/minecraft/client/player/LocalPlayer;I)V"))
+			target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;Lnet/minecraft/client/player/LocalPlayer;I)V"),
+		require = 0)
 	private boolean cafeteria$hideHandWhileZooming(
 		ItemInHandRenderer renderer, float partialTick, PoseStack poseStack, MultiBufferSource.BufferSource buffers, LocalPlayer player, int light) {
 		return !Modules.ZOOM.hidesHand();

@@ -1,14 +1,17 @@
 package io.github.lhj080902.cafeteria.mixin;
 
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import io.github.lhj080902.cafeteria.Modules;
 import net.minecraft.client.GuiMessage;
 import net.minecraft.client.gui.components.ChatComponent;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Constant;
-import org.spongepowered.asm.mixin.injection.ModifyConstant;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 
+/**
+ * 채팅창은 다른 채팅 모드도 자주 손대는 곳이라, 여기 믹스인은 모두 "적용하지 못해도 게임은 켜지게"(require = 0) 해 둔다.
+ * 적용하지 못하면 그 기능만 동작하지 않는다.
+ */
 @Mixin(ChatComponent.class)
 public abstract class ChatComponentMixin {
 	/**
@@ -20,19 +23,20 @@ public abstract class ChatComponentMixin {
 		at = @At(
 			value = "INVOKE",
 			target = "Lnet/minecraft/client/gui/components/ChatComponent;logChatMessage(Lnet/minecraft/client/GuiMessage;)V",
-			shift = At.Shift.AFTER))
+			shift = At.Shift.AFTER),
+		require = 0)
 	private GuiMessage cafeteria$addTime(GuiMessage message) {
 		return Modules.CHAT_TIME.decorate(message);
 	}
 
 	/** 무한 채팅: 화면에 보이는 줄(줄바꿈된 줄 단위)의 보관 한도 100줄을 늘린다. */
-	@ModifyConstant(method = "addMessageToDisplayQueue", constant = @Constant(intValue = 100))
+	@ModifyExpressionValue(method = "addMessageToDisplayQueue", at = @At(value = "CONSTANT", args = "intValue=100"), require = 0)
 	private int cafeteria$moreDisplayedLines(int limit) {
 		return Modules.INFINITE_CHAT.limit(limit);
 	}
 
 	/** 무한 채팅: 메시지 원본의 보관 한도 100개를 늘린다 (창 크기를 바꿀 때 이 목록으로 다시 줄바꿈한다). */
-	@ModifyConstant(method = "addMessageToQueue", constant = @Constant(intValue = 100))
+	@ModifyExpressionValue(method = "addMessageToQueue", at = @At(value = "CONSTANT", args = "intValue=100"), require = 0)
 	private int cafeteria$moreStoredMessages(int limit) {
 		return Modules.INFINITE_CHAT.limit(limit);
 	}
