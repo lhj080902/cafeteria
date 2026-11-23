@@ -53,6 +53,11 @@ tasks.register("runProductionClientGameTest", net.fabricmc.loom.task.prod.Client
 	if (project.hasProperty("extraMods")) {
 		mods.from(files(project.property("extraMods").toString().split(",")))
 	}
+
+	// 선택 실행 테스트에 넘길 JVM 인수: -PtestJvmArgs="-Dcafeteria.test.packUrl=... -Dcafeteria.test.packSha1=..."
+	if (project.hasProperty("testJvmArgs")) {
+		jvmArgs.addAll(project.property("testJvmArgs").toString().trim().split("\\s+"))
+	}
 	jvmArgs.add("-Dfabric.client.gametest")
 	runDir = layout.buildDirectory.dir("run/productionClientGameTest")
 }

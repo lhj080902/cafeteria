@@ -38,6 +38,11 @@ import java.util.List;
 public class CafeteriaClientGameTest implements FabricClientGameTest {
 	@Override
 	public void runTest(ClientGameTestContext context) {
+		// 서버 리소스팩 호환성 테스트만 돌리라고 요청받았으면 기본 테스트는 건너뛴다.
+		if (ServerResourcePackTest.requested()) {
+			return;
+		}
+
 		try (TestSingleplayerContext world = context.worldBuilder().create()) {
 			TestInput input = context.getInput();
 			TestServerContext server = world.getServer();

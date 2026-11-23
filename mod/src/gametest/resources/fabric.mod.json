@@ -6,7 +6,10 @@
 	"description": "Cafeteria Client 자동 테스트 (배포 파일에는 포함되지 않음)",
 	"environment": "client",
 	"entrypoints": {
-		"fabric-client-gametest": ["io.github.lhj080902.cafeteria.test.CafeteriaClientGameTest"]
+		"fabric-client-gametest": [
+			"io.github.lhj080902.cafeteria.test.CafeteriaClientGameTest",
+			"io.github.lhj080902.cafeteria.test.ServerResourcePackTest"
+		]
 	},
 	"depends": {
 		"cafeteria": "*"
