@@ -107,7 +107,7 @@ npm run build:win
 ```
 
 - `npm test` – 단위 테스트. Modrinth 와 Fabric 서버에 실제로 접속하는 검사가 들어 있습니다 (`CAFETERIA_OFFLINE=1` 이면 그 검사는 건너뜀).
-- `node test/e2e/run.js` – 런처를 실제로 띄워 설치 → 플레이 → 모드 설치/삭제 → 설정까지 확인합니다 (Playwright 필요, 진짜 `.minecraft` 는 건드리지 않음).
+- `node test/e2e/run.js` – 런처를 실제로 띄워 설치 → 플레이 → 모드 설치/삭제 → 설정까지 확인합니다 (Playwright 필요, 진짜 `.minecraft` 는 건드리지 않음). `CAFETERIA_E2E_EXECUTABLE` 에 빌드된 실행 파일 경로를 주면 패키징된 런처를 대상으로 검사합니다.
 - `npm run build:win` – `launcher/dist/Cafeteria-1.0.0-win-x64.zip` 생성. Windows, macOS, Linux 어디서든 빌드됩니다.
 - `npm run build:win:installer` – 설치 프로그램(NSIS) 생성. Windows 에서 실행하거나, Linux/macOS 라면 Wine 이 필요합니다.
 
@@ -120,7 +120,7 @@ npm run build:win
 | 모드 (개발 환경) | 실제 클라이언트 실행 자동 테스트: 프리룩, 줌, 히트박스, CPS, 설정 화면(한국어/영어), HUD 이동, 풀브라이트, 설정 저장 | 통과 |
 | 모드 (배포용 jar) | 같은 테스트를 정식 Minecraft 1.21.4 + Fabric Loader 0.20.1 + Fabric API 0.119.4 에서 실행 | 통과 |
 | 런처 로직 | 단위 테스트 73개 (설치, 프로필 등록, 모드 관리, 다운로드 검증, Modrinth 실제 서버) | 통과 |
-| 런처 화면 | Linux 에서 런처를 띄워 전체 흐름 자동 테스트 | 통과 |
+| 런처 화면 | Linux 에서 런처를 띄워 전체 흐름 자동 테스트 (소스 실행, 패키징된 실행 파일 둘 다) | 통과 |
 | CurseForge 연동 | API 키가 없어 공식 문서의 응답 형식대로 만든 가짜 응답으로만 검사 | **실제 서버 미검증** |
 | Windows 실행 | 실행 파일 구조·아이콘·버전 정보 검사까지만 수행 | **실제 Windows 미실행** |
 

@@ -45,12 +45,14 @@ function prepareFakeComputer() {
 async function main() {
   prepareFakeComputer();
 
+  // CAFETERIA_E2E_EXECUTABLE 을 주면 빌드된(패키징된) 런처 실행 파일을 대상으로 같은 검사를 한다.
+  const packaged = process.env.CAFETERIA_E2E_EXECUTABLE;
   const app = await electron.launch({
-    // 런처 폴더에 설치된 Electron 을 쓴다 (require('electron') 은 실행 파일 경로를 돌려준다).
-    executablePath: require('electron'),
+    // 기본은 런처 폴더에 설치된 Electron 으로 소스를 바로 실행한다 (require('electron') 은 실행 파일 경로를 돌려준다).
+    executablePath: packaged || require('electron'),
     cwd: launcherDir,
-    // 컨테이너에서 root 로 돌릴 때만 필요한 옵션. 일반 PC에서는 없어도 된다.
-    args: [...(process.getuid && process.getuid() === 0 ? ['--no-sandbox'] : []), '.'],
+    // --no-sandbox 는 컨테이너에서 root 로 돌릴 때만 필요한 옵션. 일반 PC에서는 없어도 된다.
+    args: [...(process.getuid && process.getuid() === 0 ? ['--no-sandbox'] : []), ...(packaged ? [] : ['.'])],
     env: { ...process.env, CAFETERIA_MINECRAFT_DIR: minecraftDir, CAFETERIA_GAME_DIR: gameDir, CAFETERIA_USER_DATA: userDataDir },
   });
   const page = await app.firstWindow();
@@ -158,6 +160,45 @@ async function main() {
     await sodiumMod.locator('.button.danger').click();
     await sodiumMod.waitFor({ state: 'detached' });
     assert.equal(fs.existsSync(path.join(modsDir, sodiumFile)), false, '삭제하면 파일이 없어진다');
+    await toastGone();
+
+    // ── 내 모드: jar 끌어다 놓기 ──
+    // 실제 경로가 붙은 File 객체를 만들기 위해 파일 입력 요소를 잠깐 쓰고, 그 파일들로 drop 이벤트를 보낸다.
+    const AdmZip = require(path.join(launcherDir, 'node_modules', 'adm-zip'));
+    const localJar = path.join(root, 'my-local-mod.jar');
+    const localZip = new AdmZip();
+    localZip.addFile('fabric.mod.json', Buffer.from(JSON.stringify({ id: 'my-local-mod', name: '내가 만든 모드', version: '0.1' })));
+    localZip.writeZip(localJar);
+    const notJar = path.join(root, 'notes.txt');
+    fs.writeFileSync(notJar, 'jar 가 아닌 파일');
+    await page.evaluate(() => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.id = 'e2e-files';
+      document.body.append(input);
+    });
+    await page.locator('#e2e-files').setInputFiles([localJar, notJar]);
+    await page.evaluate(() => {
+      const transfer = new DataTransfer();
+
+      for (const file of document.querySelector('#e2e-files').files) {
+        transfer.items.add(file);
+      }
+
+      document.querySelector('#view-mods').dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    });
+    await waitForText('.toast.success', '모드 1개를 추가했습니다.');
+    await waitForText('.toast.error', 'notes.txt');
+    const localRow = page.locator('#mods-list .row').filter({ hasText: '내가 만든 모드' });
+    await localRow.waitFor();
+    assert.match(await localRow.locator('.row-meta').innerText(), /^직접 추가 · my-local-mod\.jar/);
+    assert.ok(fs.existsSync(path.join(modsDir, 'my-local-mod.jar')));
+    await shot('mods-dropped-file');
+    await localRow.locator('.button.danger').click();
+    await localRow.waitFor({ state: 'detached' });
+    await page.locator('.toast').first().waitFor({ state: 'detached', timeout: 15_000 }).catch(() => {});
+    await toastGone();
     await toastGone();
 
     // ── CurseForge: 키가 없으면 안내 후 설정으로 ──
