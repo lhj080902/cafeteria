@@ -35,7 +35,7 @@ function fakeFetch(routes) {
 
   const fetch = async (url, options = {}) => {
     const key = String(url);
-    calls.push({ url: key, headers: options.headers || {} });
+    calls.push({ url: key, headers: options.headers || {}, method: options.method || 'GET', body: options.body });
     let route = routes[key];
 
     if (!route) {

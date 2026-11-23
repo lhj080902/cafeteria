@@ -27,14 +27,35 @@ const profilesFile = path.join(minecraftDir, 'launcher_profiles.json');
 const settingsFile = path.join(userDataDir, 'settings.json');
 const modsDir = path.join(gameDir, 'mods');
 
+const bundledMod = fs.readdirSync(path.join(launcherDir, 'resources', 'mods')).find((name) => /^cafeteria-client-.*\.jar$/.test(name));
+/** 직접 넣은 모드 검사에 쓸 실제 모드 파일 (없으면 그 검사는 건너뛴다) */
+const realModJar = process.env.CAFETERIA_E2E_REAL_MOD;
+
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 const cafeteriaProfile = () => readJson(profilesFile).profiles['cafeteria-client'];
 
 function prepareFakeComputer() {
   fs.mkdirSync(minecraftDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
+  // 이전 실행의 스크린샷이 섞이지 않게 비우고 시작한다.
+  fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
   fs.writeFileSync(profilesFile, JSON.stringify({ profiles: { vanilla: { name: '', type: 'latest-release', lastVersionId: 'latest-release' } }, settings: {} }));
+
+  // 다른 클라이언트에서 쓰던 설정 (설정 가져오기 검사용)
+  const oldFiles = {
+    'options.txt': 'mouseSensitivity:0.31\nkey_key.attack:key.mouse.left\n',
+    'servers.dat': 'server list',
+    'config/xaero/minimap/client.cfg': 'current_profile = default\n',
+    'config/xaerohud.txt': 'hud',
+    'xaero/minimap/Multiplayer_example/waypoints.txt': 'waypoint:base',
+    'resourcepacks/pvp.zip': 'pack',
+  };
+
+  for (const [relative, content] of Object.entries(oldFiles)) {
+    fs.mkdirSync(path.dirname(path.join(minecraftDir, relative)), { recursive: true });
+    fs.writeFileSync(path.join(minecraftDir, relative), content);
+  }
 
   // "공식 런처" 역할을 하는 가짜 프로그램: 실행되면 표시 파일을 남긴다.
   const fakeLauncher = path.join(root, 'fake-official-launcher.sh');
@@ -96,7 +117,7 @@ async function main() {
     assert.match(profile.javaArgs, /^-Xmx4G /);
     assert.ok(readJson(profilesFile).profiles.vanilla, '기존 프로필은 남아 있어야 한다');
     assert.ok(fs.existsSync(path.join(minecraftDir, 'versions', 'fabric-loader-0.20.1-1.21.4', 'fabric-loader-0.20.1-1.21.4.json')));
-    assert.deepEqual(fs.readdirSync(modsDir).sort(), ['cafeteria-client-1.0.0+1.21.4.jar', 'fabric-api-0.119.4+1.21.4.jar']);
+    assert.deepEqual(fs.readdirSync(modsDir).sort(), [bundledMod, 'fabric-api-0.119.4+1.21.4.jar']);
 
     for (let i = 0; i < 100 && !fs.existsSync(launchedMarker); i++) {
       await page.waitForTimeout(50);
@@ -201,6 +222,86 @@ async function main() {
     await toastGone();
     await toastGone();
 
+    // ── 내 모드: 이름을 바꿔서 넣은 실제 모드도 이름·아이콘이 나오고, Modrinth 에서 "설치됨"으로 인식된다 ──
+    if (realModJar) {
+      const renamed = path.join(root, 'my-renamed-mod.jar');
+      fs.copyFileSync(realModJar, renamed);
+      await page.locator('#e2e-files').setInputFiles([renamed]);
+      await page.evaluate(() => {
+        const transfer = new DataTransfer();
+        transfer.items.add(document.querySelector('#e2e-files').files[0]);
+        document.querySelector('#view-mods').dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+      });
+      const realRow = page.locator('#mods-list .row').filter({ hasText: 'my-renamed-mod.jar' });
+      await realRow.waitFor();
+      assert.match(await realRow.locator('.row-title').innerText(), /^Xaero's Minimap/);
+      assert.equal(await realRow.locator('img.row-icon').count(), 1, '모드 아이콘이 보여야 한다');
+      await page.waitForFunction(() => document.querySelector('#mods-list img.row-icon').naturalWidth > 0);
+      await toastGone();
+      await shot('mods-custom-mod-icon');
+
+      // 파일 해시로 Modrinth 프로젝트를 알아내면 검색 화면에서도 설치된 것으로 표시된다
+      for (let i = 0; i < 100; i++) {
+        const index = fs.existsSync(path.join(gameDir, 'cafeteria-mods.json')) ? readJson(path.join(gameDir, 'cafeteria-mods.json')) : { files: {} };
+
+        if (index.files['my-renamed-mod.jar'] && index.files['my-renamed-mod.jar'].origin === 'modrinth') {
+          break;
+        }
+
+        await page.waitForTimeout(200);
+      }
+
+      assert.equal(readJson(path.join(gameDir, 'cafeteria-mods.json')).files['my-renamed-mod.jar'].projectId, '1bokaNcj');
+      await nav('browse');
+      await page.locator('#browse-query').fill("xaero's minimap");
+      await page.locator('#browse-form button[type="submit"]').click();
+      const xaeroRow = page.locator('#browse-results .row').filter({ has: page.locator('.row-title', { hasText: /^Xaero's Minimap\s/ }) }).first();
+      await xaeroRow.locator('.button.primary', { hasText: '설치됨' }).waitFor({ timeout: 60_000 });
+      await nav('mods');
+      await realRow.locator('.button.danger').click();
+      await realRow.waitFor({ state: 'detached' });
+      await toastGone();
+    }
+
+    // ── 설정 가져오기 ──
+    await nav('import');
+    const source = page.locator('#import-sources .source').filter({ hasText: '기본 마인크래프트 폴더' });
+    await source.waitFor({ timeout: 30_000 });
+    assert.equal(await source.locator('.source-path').innerText(), minecraftDir);
+    assert.deepEqual(await source.locator('.import-item strong').allInnerTexts(), [
+      '게임 설정',
+      '서버 목록',
+      'Xaero 미니맵·월드맵 설정',
+      'Xaero 웨이포인트·지도 데이터',
+      '리소스팩',
+    ]);
+    assert.equal(await source.locator('.import-item input:checked').count(), 5);
+    await shot('import-sources');
+
+    // 서버 목록만 빼고 가져온다
+    await source.locator('input[data-item="servers"]').uncheck();
+    await source.locator('.button.primary').click();
+    await waitForText('.toast.success', '파일 5개를 가져왔습니다.');
+    assert.equal(fs.readFileSync(path.join(gameDir, 'options.txt'), 'utf8').startsWith('mouseSensitivity:0.31'), true);
+    assert.ok(fs.existsSync(path.join(gameDir, 'config', 'xaero', 'minimap', 'client.cfg')));
+    assert.ok(fs.existsSync(path.join(gameDir, 'config', 'xaerohud.txt')));
+    assert.ok(fs.existsSync(path.join(gameDir, 'xaero', 'minimap', 'Multiplayer_example', 'waypoints.txt')));
+    assert.ok(fs.existsSync(path.join(gameDir, 'resourcepacks', 'pvp.zip')));
+    assert.equal(fs.existsSync(path.join(gameDir, 'servers.dat')), false, '고르지 않은 항목은 가져오지 않는다');
+    await toastGone();
+
+    // 다시 가져오면 이미 있는 파일은 건너뛰고, 덮어쓰기를 켜면 바꾼다
+    fs.writeFileSync(path.join(gameDir, 'options.txt'), 'Cafeteria 에서 바꾼 설정');
+    await source.locator('.button.primary').click();
+    await waitForText('.toast.success', '건너뛴 파일 5개');
+    assert.equal(fs.readFileSync(path.join(gameDir, 'options.txt'), 'utf8'), 'Cafeteria 에서 바꾼 설정');
+    await toastGone();
+    await source.locator('.source-footer input[type="checkbox"]').check();
+    await source.locator('.button.primary').click();
+    await waitForText('.toast.success', '파일 5개를 가져왔습니다.');
+    assert.equal(fs.readFileSync(path.join(gameDir, 'options.txt'), 'utf8').startsWith('mouseSensitivity:0.31'), true);
+    await toastGone();
+
     // ── CurseForge: 키가 없으면 안내 후 설정으로 ──
     await nav('browse');
     await page.locator('.segment[data-source="curseforge"]').click();
@@ -237,6 +338,19 @@ async function main() {
     assert.equal(saved.resolutionWidth, 1920);
     assert.equal(saved.resolutionHeight, 1080);
     assert.equal(saved.jvmArgs, '-Dcafeteria.test=1');
+
+    // 자동 업데이트: 이 실행 방식(개발 실행, Linux)은 지원 대상이 아니므로 안내문이 나오고, 확인을 눌러도 오류가 없어야 한다
+    assert.match(await text('#update-status'), /설치 파일로 설치한 Windows 런처에서만 자동 업데이트를 지원합니다/);
+    assert.equal(await page.locator('#update-box').isHidden(), true);
+    assert.equal(await page.locator('#setting-auto-update').isChecked(), true);
+    await page.locator('#setting-check-update').click();
+    await page.locator('#setting-auto-update').uncheck();
+    await page.waitForFunction(() => !document.querySelector('#setting-auto-update').checked);
+    await page.waitForTimeout(300);
+    assert.equal(readJson(settingsFile).autoUpdate, false);
+    await page.locator('#setting-auto-update').check();
+    await page.waitForTimeout(300);
+    assert.equal(readJson(settingsFile).autoUpdate, true);
 
     await page.locator('#curseforge-key').fill('e2e-dummy-key');
     await page.locator('#curseforge-form button[type="submit"]').click();
@@ -276,7 +390,7 @@ async function main() {
     await page.locator('#setting-remove-profile').click();
     await waitForText('.toast.success', 'Cafeteria 프로필을 제거했습니다.');
     assert.equal(cafeteriaProfile(), undefined);
-    assert.ok(fs.existsSync(path.join(modsDir, 'cafeteria-client-1.0.0+1.21.4.jar')), '게임 폴더는 남아 있어야 한다');
+    assert.ok(fs.existsSync(path.join(modsDir, bundledMod)), '게임 폴더는 남아 있어야 한다');
     await toastGone();
 
     await page.locator('#setting-reset').click();

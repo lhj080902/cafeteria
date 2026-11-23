@@ -1,11 +1,16 @@
 'use strict';
 
+const crypto = require('node:crypto');
+const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const AdmZip = require('adm-zip');
 const { BUILTIN_MOD_IDS } = require('./constants');
 const { LauncherError } = require('./errors');
 const { exists, readJson, writeFileAtomic } = require('./fs-util');
+const http = require('./http');
+
+const MODRINTH_API = 'https://api.modrinth.com/v2';
 
 const ENABLED_SUFFIX = '.jar';
 const DISABLED_SUFFIX = '.jar.disabled';
@@ -64,7 +69,8 @@ class ModManager {
     const projects = new Set();
 
     for (const [name, info] of Object.entries(index.files)) {
-      if (present.has(name) && info && info.source === source && info.projectId) {
+      // 직접 넣은 파일이라도 그 사이트의 모드로 확인된 것(origin)은 설치된 것으로 센다.
+      if (present.has(name) && info && (info.source === source || info.origin === source) && info.projectId) {
         projects.add(String(info.projectId));
       }
     }
@@ -108,7 +114,8 @@ class ModManager {
         name: metadata.name || info.title || baseName(fileName),
         version: metadata.version,
         description: metadata.description,
-        icon: metadata.icon || null,
+        // jar 안에 아이콘이 없으면 Modrinth 에서 찾은 아이콘 주소를 쓴다.
+        icon: metadata.icon || info.iconUrl || null,
         source: info.source || 'local',
         builtin: BUILTIN_MOD_IDS.includes(metadata.id),
       });
@@ -148,6 +155,71 @@ class ModManager {
 
     this.metadataCache.set(cacheKey, metadata);
     return metadata;
+  }
+
+  /**
+   * 직접 넣은 모드 파일(출처를 모르는 파일)을 파일 해시로 Modrinth 에서 찾아, 이름·아이콘·프로젝트 정보를 기록한다.
+   * 한 번 찾아본 파일은 다시 묻지 않는다. 연결에 실패하면 아무것도 기록하지 않아 다음에 다시 시도한다.
+   *
+   * @returns {Promise<boolean>} 새로 알아낸 모드가 있으면 true
+   */
+  async identifyLocalMods() {
+    const index = await this.readIndex();
+    const unknown = [];
+
+    for (const fileName of await this.fileNames()) {
+      const name = baseName(fileName);
+      const info = index.files[name];
+
+      if (!info || (info.source === 'local' && !info.lookedUp)) {
+        unknown.push({ name, hash: await sha1OfFile(path.join(this.modsDir, fileName)) });
+      }
+    }
+
+    if (unknown.length === 0) {
+      return false;
+    }
+
+    let versions;
+    let projects = [];
+
+    try {
+      versions = await http.postJson(`${MODRINTH_API}/version_files`, { hashes: unknown.map((file) => file.hash), algorithm: 'sha1' });
+      const projectIds = [...new Set(Object.values(versions || {}).map((version) => version.project_id).filter(Boolean))];
+
+      if (projectIds.length > 0) {
+        projects = await http.getJson(`${MODRINTH_API}/projects?${new URLSearchParams({ ids: JSON.stringify(projectIds) })}`);
+      }
+    } catch {
+      return false;
+    }
+
+    const projectById = new Map((Array.isArray(projects) ? projects : []).map((project) => [project.id, project]));
+    let found = false;
+
+    for (const { name, hash } of unknown) {
+      const version = versions && versions[hash];
+      const project = version && projectById.get(version.project_id);
+      const previous = index.files[name] || { source: 'local' };
+
+      if (project) {
+        found = true;
+        index.files[name] = {
+          ...previous,
+          lookedUp: true,
+          origin: 'modrinth',
+          projectId: project.id,
+          versionId: version.id,
+          title: project.title,
+          iconUrl: typeof project.icon_url === 'string' && project.icon_url.startsWith('https://cdn.modrinth.com/') ? project.icon_url : undefined,
+        };
+      } else {
+        index.files[name] = { ...previous, lookedUp: true };
+      }
+    }
+
+    await writeFileAtomic(this.indexFile, JSON.stringify(index, null, 2));
+    return found;
   }
 
   /** PC에 있는 jar 파일을 mods 폴더로 복사한다. 추가된 파일 이름 목록을 돌려준다. */
@@ -212,6 +284,16 @@ class ModManager {
       throw new LauncherError('BUILTIN_MOD', '카페테리아 기본 모드는 끄거나 지울 수 없습니다.');
     }
   }
+}
+
+function sha1OfFile(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha1');
+    fs.createReadStream(file)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('error', reject)
+      .on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 /** fabric.mod.json 의 icon 항목이 가리키는 PNG 를 data URI 로 읽는다. 없거나 너무 크면 undefined. */

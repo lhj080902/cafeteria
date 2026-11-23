@@ -1,17 +1,20 @@
 'use strict';
 
 const { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } = require('electron');
+const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
-const { EXTERNAL_HOSTS, LOADER_VERSION, MINECRAFT_VERSION, USER_AGENT } = require('./constants');
+const { EXTERNAL_HOSTS, LOADER_VERSION, MINECRAFT_VERSION, RELEASES_URL, USER_AGENT } = require('./constants');
 const { LauncherError } = require('./errors');
 const http = require('./http');
+const importer = require('./importer');
 const installer = require('./installer');
 const { installMod } = require('./mod-installer');
 const { ModManager } = require('./mods');
 const { isOfficialLauncherRunning, launchOfficialLauncher } = require('./official-launcher');
 const paths = require('./paths');
 const { SettingsStore } = require('./settings');
+const { UpdateManager } = require('./updater');
 const curseforge = require('./sources/curseforge');
 const modrinth = require('./sources/modrinth');
 
@@ -31,7 +34,10 @@ const resourcesDir = app.isPackaged ? process.resourcesPath : path.join(__dirnam
 let window = null;
 /** @type {SettingsStore} */
 let settings;
+/** @type {UpdateManager} */
+let updates;
 let playing = false;
+let identifyingMods = false;
 
 function gameDir() {
   return settings.get('gameDir') || paths.defaultGameDir();
@@ -41,10 +47,54 @@ function modManager() {
   return new ModManager(gameDir());
 }
 
-function sendProgress(scope, progress) {
+function send(channel, payload) {
   if (window && !window.isDestroyed()) {
-    window.webContents.send('progress', { scope, ...progress });
+    window.webContents.send(channel, payload);
   }
+}
+
+function sendProgress(scope, progress) {
+  send('progress', { scope, ...progress });
+}
+
+/**
+ * 자동 업데이트 관리자를 만든다. 설치 파일로 설치한 Windows 런처에서만 스스로 설치까지 하고,
+ * 압축본으로 실행 중이면 새 버전이 있다는 것만 알려 준다.
+ */
+function createUpdateManager() {
+  const supported = app.isPackaged && process.platform === 'win32';
+  const autoUpdater = supported ? require('electron-updater').autoUpdater : null;
+  // NSIS 설치 프로그램은 실행 파일 옆에 언인스톨러를 둔다. 그 파일이 없으면 압축을 풀어서 쓰는 중이다.
+  const installed = supported && fs.existsSync(path.join(path.dirname(process.execPath), `Uninstall ${app.getName()}.exe`));
+
+  return new UpdateManager({
+    autoUpdater,
+    canInstall: installed,
+    unsupportedReason: supported
+      ? '압축본으로 실행 중이라 자동으로 설치할 수 없습니다. 새 설치 파일을 받아 주세요.'
+      : '설치 파일로 설치한 Windows 런처에서만 자동 업데이트를 지원합니다.',
+    onChange: (state) => send('update', state),
+  });
+}
+
+/** 직접 넣은 모드의 이름·아이콘을 Modrinth 에서 찾아 두고, 새로 알아낸 것이 있으면 화면에 알린다. */
+function identifyModsInBackground(manager) {
+  if (identifyingMods) {
+    return;
+  }
+
+  identifyingMods = true;
+  manager
+    .identifyLocalMods()
+    .then((found) => {
+      if (found) {
+        send('mods-updated');
+      }
+    })
+    .catch((error) => console.error('[mods:identify]', error))
+    .finally(() => {
+      identifyingMods = false;
+    });
 }
 
 function createWindow() {
@@ -70,7 +120,13 @@ function createWindow() {
   // 런처 화면은 내장 페이지 하나뿐이다. 다른 페이지로 이동하거나 새 창을 여는 것은 모두 막는다.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => {
+    window.show();
+
+    if (settings.get('autoUpdate')) {
+      updates.check(false);
+    }
+  });
   window.on('closed', () => {
     window = null;
   });
@@ -113,6 +169,8 @@ async function currentState() {
     gameDir: gameDir(),
     status,
     settings: settings.publicView(),
+    update: updates.state,
+    releasesUrl: RELEASES_URL,
   };
 }
 
@@ -189,7 +247,12 @@ function registerHandlers() {
     await shell.openPath(directory);
   });
 
-  handle('mods:list', () => modManager().list());
+  handle('mods:list', async () => {
+    const manager = modManager();
+    const mods = await manager.list();
+    identifyModsInBackground(manager);
+    return mods;
+  });
 
   handle('mods:addDialog', async () => {
     const result = await dialog.showOpenDialog(window, {
@@ -246,6 +309,24 @@ function registerHandlers() {
       onProgress: (progress) => sendProgress(`install:${source}:${projectId}`, progress),
     });
   });
+
+  handle('import:find', () => importer.findSources({ gameDir: gameDir() }));
+
+  handle('import:chooseFolder', async () => {
+    const result = await dialog.showOpenDialog(window, {
+      title: '설정을 가져올 게임 폴더 선택 (options.txt 나 config 폴더가 들어 있는 곳)',
+      properties: ['openDirectory'],
+    });
+
+    return result.canceled ? null : importer.describeSource(result.filePaths[0], '직접 고른 폴더');
+  });
+
+  handle('import:run', (sourceDirectory, itemIds, overwrite) =>
+    importer.importItems({ sourceDirectory, itemIds, gameDir: gameDir(), overwrite: Boolean(overwrite) }),
+  );
+
+  handle('update:check', () => updates.check(true));
+  handle('update:install', () => updates.install());
 
   handle('settings:update', (partial) => settings.update(partial));
   handle('settings:reset', () => settings.reset());
@@ -321,6 +402,7 @@ if (!app.requestSingleInstanceLock()) {
       encrypt: (text) => safeStorage.encryptString(text),
       decrypt: (data) => safeStorage.decryptString(data),
     }).load();
+    updates = createUpdateManager();
     registerHandlers();
     createWindow();
   });

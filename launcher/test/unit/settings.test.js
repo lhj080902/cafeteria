@@ -24,6 +24,7 @@ test('처음에는 기본값을 쓴다', async (t) => {
     jvmArgs: '',
     javaPath: '',
     closeOnLaunch: false,
+    autoUpdate: true,
     launcherPath: '',
     gameDir: '',
     hasCurseforgeKey: false,
@@ -137,4 +138,14 @@ test('설정 초기화는 게임 폴더와 CurseForge 키를 남기고 나머지
   assert.equal(view.gameDir, '/games/cafe');
   assert.equal(view.hasCurseforgeKey, true);
   assert.equal((await new SettingsStore(file, fakeVault).load()).get('memoryGb'), 4);
+});
+
+test('자동 업데이트는 기본으로 켜져 있고 끌 수 있다', async (t) => {
+  const file = path.join(tempDir(t), 'settings.json');
+  const store = await new SettingsStore(file).load();
+  assert.equal(store.get('autoUpdate'), true);
+  await store.update({ autoUpdate: false });
+  assert.equal((await new SettingsStore(file).load()).get('autoUpdate'), false);
+  await store.update({ autoUpdate: 'no' });
+  assert.equal(store.get('autoUpdate'), false, '잘못된 값은 무시한다');
 });

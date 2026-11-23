@@ -83,6 +83,16 @@ test('요청마다 런처 User-Agent 를 붙인다', async () => {
   const fetch = fakeFetch({ [URL_OK]: { json: { ok: true } } });
   http.setFetch(fetch);
   assert.deepEqual(await http.getJson(URL_OK, { headers: { 'x-api-key': 'k' } }), { ok: true });
-  assert.equal(fetch.calls[0].headers['User-Agent'], 'CafeteriaLauncher/1.0.0');
+  assert.equal(fetch.calls[0].headers['User-Agent'], 'CafeteriaLauncher/1.1.0');
   assert.equal(fetch.calls[0].headers['x-api-key'], 'k');
+});
+
+test('postJson 은 JSON 본문을 POST 로 보낸다', async () => {
+  const fetch = fakeFetch({ [URL_OK]: { json: { found: 1 } } });
+  http.setFetch(fetch);
+  assert.deepEqual(await http.postJson(URL_OK, { hashes: ['a'], algorithm: 'sha1' }), { found: 1 });
+  assert.equal(fetch.calls[0].method, 'POST');
+  assert.equal(fetch.calls[0].body, '{"hashes":["a"],"algorithm":"sha1"}');
+  assert.equal(fetch.calls[0].headers['Content-Type'], 'application/json');
+  assert.equal(fetch.calls[0].headers['User-Agent'], 'CafeteriaLauncher/1.1.0');
 });

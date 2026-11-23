@@ -32,11 +32,14 @@ module.exports = {
   CAFETERIA_MOD_ID: 'cafeteria',
   CAFETERIA_MOD_FILE_PREFIX: 'cafeteria-client-',
 
-  USER_AGENT: 'CafeteriaLauncher/1.0.0',
+  USER_AGENT: 'CafeteriaLauncher/1.1.0',
+
+  /** 새 버전 설치 파일이 올라오는 곳 (자동 업데이트를 지원하지 않는 실행 방식에서 안내하는 페이지). */
+  RELEASES_URL: 'https://github.com/lhj080902/cafeteria-client/releases/latest',
 
   /** 다운로드를 허용하는 호스트. 검색 결과에 다른 주소가 들어 있어도 여기 없는 곳에서는 받지 않는다. */
   DOWNLOAD_HOSTS: ['cdn.modrinth.com', 'edge.forgecdn.net', 'mediafilez.forgecdn.net', 'maven.fabricmc.net'],
 
   /** 런처에서 기본 브라우저로 열 수 있는 사이트. */
-  EXTERNAL_HOSTS: ['modrinth.com', 'www.curseforge.com', 'support.curseforge.com', 'console.curseforge.com', 'www.minecraft.net'],
+  EXTERNAL_HOSTS: ['modrinth.com', 'www.curseforge.com', 'support.curseforge.com', 'console.curseforge.com', 'www.minecraft.net', 'github.com'],
 };

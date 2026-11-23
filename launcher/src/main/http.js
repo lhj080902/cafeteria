@@ -17,11 +17,13 @@ function setFetch(fetchFunction) {
   fetchImpl = fetchFunction;
 }
 
-async function request(url, { headers = {}, timeoutMs }) {
+async function request(url, { headers = {}, timeoutMs, method = 'GET', body }) {
   let response;
 
   try {
     response = await fetchImpl(url, {
+      method,
+      body,
       headers: { 'User-Agent': USER_AGENT, ...headers },
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -39,8 +41,17 @@ async function request(url, { headers = {}, timeoutMs }) {
   return response;
 }
 
-async function getJson(url, { headers = {} } = {}) {
-  const response = await request(url, { headers: { Accept: 'application/json', ...headers }, timeoutMs: JSON_TIMEOUT_MS });
+function getJson(url, { headers = {} } = {}) {
+  return readJson(url, { headers });
+}
+
+/** JSON 본문을 보내고 JSON 응답을 받는다. */
+function postJson(url, payload, { headers = {} } = {}) {
+  return readJson(url, { headers: { 'Content-Type': 'application/json', ...headers }, method: 'POST', body: JSON.stringify(payload) });
+}
+
+async function readJson(url, { headers, method, body }) {
+  const response = await request(url, { headers: { Accept: 'application/json', ...headers }, timeoutMs: JSON_TIMEOUT_MS, method, body });
 
   try {
     return await response.json();
@@ -128,4 +139,4 @@ async function download(url, destination, { allowedHosts, hashes = {}, onProgres
   }
 }
 
-module.exports = { setFetch, getJson, download };
+module.exports = { setFetch, getJson, postJson, download };

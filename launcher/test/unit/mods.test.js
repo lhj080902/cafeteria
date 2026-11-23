@@ -143,3 +143,75 @@ test('jar 안의 아이콘을 목록용 이미지로 읽는다. 너무 크거나
   const expected = `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`;
   assert.deepEqual(icons, { 'a-small': expected, 'b-dot-slash': expected, 'c-huge': null, 'd-missing': null, 'e-not-png': null });
 });
+
+test('직접 넣은 모드를 Modrinth 에서 찾아 이름과 아이콘을 채운다', async (t) => {
+  const crypto = require('node:crypto');
+  const http = require('../../src/main/http');
+  const { fakeFetch } = require('./helpers');
+  t.after(() => http.setFetch((...args) => globalThis.fetch(...args)));
+  const { manager, modsDir } = setup(t);
+  const sha1 = (name) => crypto.createHash('sha1').update(fs.readFileSync(path.join(modsDir, name))).digest('hex');
+
+  // 이름이 적혀 있지 않은 모드 파일 두 개 (내용이 달라야 해시가 다르다)
+  makeJar(path.join(modsDir, 'known.jar'), { id: 'known' });
+  makeJar(path.join(modsDir, 'unknown.jar.disabled'), { id: 'homemade', name: '직접 만든 모드' });
+  makeJar(path.join(modsDir, 'weird-icon.jar'), { id: 'weird' });
+  makeJar(path.join(modsDir, 'from-launcher.jar'), { id: 'sodium' });
+  await manager.record('from-launcher.jar', { source: 'modrinth', projectId: 'AANobbMI' });
+
+  const fetch = fakeFetch({
+    'https://api.modrinth.com/v2/version_files': (url, options) => {
+      const { hashes, algorithm } = JSON.parse(options.body);
+      assert.equal(algorithm, 'sha1');
+      assert.deepEqual([...hashes].sort(), [sha1('known.jar'), sha1('unknown.jar.disabled'), sha1('weird-icon.jar')].sort(), '출처를 아는 파일은 묻지 않는다');
+      return {
+        json: {
+          [sha1('known.jar')]: { id: 'ver1', project_id: 'PROJ1' },
+          [sha1('weird-icon.jar')]: { id: 'ver2', project_id: 'PROJ2' },
+        },
+      };
+    },
+    'https://api.modrinth.com/v2/projects*': {
+      json: [
+        { id: 'PROJ1', title: '알려진 모드', icon_url: 'https://cdn.modrinth.com/data/PROJ1/icon.webp' },
+        { id: 'PROJ2', title: '이상한 아이콘', icon_url: 'https://evil.example.com/icon.png' },
+      ],
+    },
+  });
+  http.setFetch(fetch);
+
+  assert.equal(await manager.identifyLocalMods(), true);
+  const mods = Object.fromEntries((await manager.list()).map((mod) => [mod.fileName, mod]));
+  assert.equal(mods['known.jar'].name, '알려진 모드');
+  assert.equal(mods['known.jar'].icon, 'https://cdn.modrinth.com/data/PROJ1/icon.webp');
+  assert.equal(mods['known.jar'].source, 'local', '직접 넣은 파일이라는 표시는 유지한다');
+  assert.equal(mods['weird-icon.jar'].name, '이상한 아이콘');
+  assert.equal(mods['weird-icon.jar'].icon, null, 'Modrinth 가 아닌 주소의 아이콘은 쓰지 않는다');
+  assert.equal(mods['unknown.jar.disabled'].name, '직접 만든 모드');
+  assert.deepEqual([...(await manager.installedProjects('modrinth'))].sort(), ['AANobbMI', 'PROJ1', 'PROJ2']);
+
+  // 한 번 찾아본 파일은 다시 묻지 않는다
+  const callsBefore = fetch.calls.length;
+  assert.equal(await manager.identifyLocalMods(), false);
+  assert.equal(fetch.calls.length, callsBefore);
+});
+
+test('Modrinth 에 연결하지 못하면 기록하지 않고 다음에 다시 찾는다', async (t) => {
+  const http = require('../../src/main/http');
+  const { fakeFetch } = require('./helpers');
+  t.after(() => http.setFetch((...args) => globalThis.fetch(...args)));
+  const { manager, modsDir } = setup(t);
+  makeJar(path.join(modsDir, 'mod.jar'), null);
+
+  http.setFetch(async () => {
+    throw new Error('offline');
+  });
+  assert.equal(await manager.identifyLocalMods(), false);
+  assert.deepEqual((await manager.readIndex()).files, {});
+
+  const fetch = fakeFetch({ 'https://api.modrinth.com/v2/version_files': { json: {} } });
+  http.setFetch(fetch);
+  assert.equal(await manager.identifyLocalMods(), false);
+  assert.equal(fetch.calls.length, 1, '다시 연결되면 물어본다');
+  assert.deepEqual((await manager.readIndex()).files, { 'mod.jar': { source: 'local', lookedUp: true } });
+});

@@ -705,3 +705,99 @@ input[type="range"] {
   border-radius: 999px;
   background: var(--border);
 }
+
+/* ── 업데이트 알림 (사이드바) ─────────────────── */
+
+.update-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid rgba(242, 166, 90, 0.45);
+  border-radius: var(--radius);
+  background: rgba(242, 166, 90, 0.08);
+  color: var(--text);
+}
+
+.update-box .progress {
+  margin-top: 0;
+}
+
+.update-box .button {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+/* ── 설정 가져오기 ────────────────────────────── */
+
+.source {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.source-title {
+  font-weight: 700;
+}
+
+.source-path {
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.import-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.import-item input,
+.source-footer input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.import-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.import-item-text span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.import-item-size {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.source-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.source-footer label {
+  display: flex;
+  gap: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+}

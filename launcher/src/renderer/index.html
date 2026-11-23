@@ -23,8 +23,14 @@
       <button type="button" class="nav-item active" data-view="home">홈</button>
       <button type="button" class="nav-item" data-view="mods">내 모드</button>
       <button type="button" class="nav-item" data-view="browse">모드 찾기</button>
+      <button type="button" class="nav-item" data-view="import">설정 가져오기</button>
       <button type="button" class="nav-item" data-view="settings">설정</button>
       <div class="sidebar-footer">
+        <div id="update-box" class="update-box" hidden>
+          <div id="update-text"></div>
+          <div class="progress" id="update-progress" hidden><div class="progress-fill" id="update-progress-fill"></div></div>
+          <button id="update-action" type="button" class="button primary" hidden></button>
+        </div>
         <div id="version-label">Minecraft</div>
         <div id="app-version-label" class="muted"></div>
       </div>
@@ -101,6 +107,22 @@
         <div class="browse-more">
           <button id="browse-more" type="button" class="button" hidden>더 보기</button>
         </div>
+      </section>
+
+      <!-- 설정 가져오기 -->
+      <section id="view-import" class="view">
+        <div class="view-header">
+          <div>
+            <h1>설정 가져오기</h1>
+            <p class="muted">루나 클라이언트나 기본 마인크래프트에서 쓰던 설정을 Cafeteria 게임 폴더로 복사합니다. 원본은 그대로 남습니다.</p>
+          </div>
+          <div class="actions">
+            <button id="import-rescan" type="button" class="button">다시 찾기</button>
+            <button id="import-choose" type="button" class="button primary">폴더 직접 선택</button>
+          </div>
+        </div>
+        <div id="import-notice" class="notice" hidden></div>
+        <div id="import-sources" class="list"></div>
       </section>
 
       <!-- 설정 -->
@@ -204,6 +226,19 @@
             <button type="submit" class="button primary">저장</button>
             <button id="curseforge-clear" type="button" class="button">삭제</button>
           </form>
+        </div>
+
+        <h2>업데이트</h2>
+
+        <div class="setting">
+          <div class="setting-text">
+            <strong>자동 업데이트</strong>
+            <span id="update-status" class="muted"></span>
+          </div>
+          <div class="setting-control">
+            <button id="setting-check-update" type="button" class="button">지금 확인</button>
+            <label class="switch"><input id="setting-auto-update" type="checkbox" aria-label="자동 업데이트"><span></span></label>
+          </div>
         </div>
 
         <h2>관리</h2>

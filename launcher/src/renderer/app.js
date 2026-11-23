@@ -12,6 +12,8 @@ const state = {
   browse: { source: 'modrinth', query: '', page: 0, started: false, requestId: 0 },
   /** 설치 진행률을 표시할 버튼: 진행 범위 이름 → 버튼 */
   installButtons: new Map(),
+  /** "설정 가져오기" 화면을 한 번이라도 불러왔는지 */
+  importLoaded: false,
 };
 
 /** { ok, data } 응답에서 data 를 꺼낸다. 실패 응답이면 안내문을 담은 오류를 던진다. */
@@ -91,6 +93,8 @@ function showView(name) {
     refreshMods();
   } else if (name === 'browse' && !state.browse.started) {
     searchMods(true);
+  } else if (name === 'import' && !state.importLoaded) {
+    loadImportSources();
   }
 }
 
@@ -131,9 +135,181 @@ function renderState() {
   $('#setting-java-path').textContent = settings.javaPath || '자동 (공식 런처에 들어 있는 Java 사용)';
   $('#setting-jvm-args').value = settings.jvmArgs;
   $('#setting-close').checked = settings.closeOnLaunch;
+  $('#setting-auto-update').checked = settings.autoUpdate;
+  renderUpdate(info.update);
   $('#setting-game-dir').textContent = info.gameDir;
   $('#setting-launcher-path').textContent = settings.launcherPath || '자동으로 찾기';
   setChip($('#curseforge-key-state'), settings.hasCurseforgeKey ? '저장됨' : '미설정', settings.hasCurseforgeKey ? 'ok' : null);
+}
+
+/* ── 런처 업데이트 ─────────────────────────────── */
+
+function renderUpdate(update) {
+  if (!update || !state.info) {
+    return;
+  }
+
+  state.info.update = update;
+  const version = `v${state.info.appVersion}`;
+  const statusTexts = {
+    idle: `현재 버전 ${version}`,
+    checking: '새 버전이 있는지 확인하는 중...',
+    'up-to-date': `최신 버전을 쓰고 있습니다 (${version}).`,
+  };
+  $('#update-status').textContent = statusTexts[update.status] || update.message || `현재 버전 ${version}`;
+
+  // 사이드바 알림: 새 버전을 받고 있거나, 받아 뒀거나, 직접 받아야 할 때만 보인다.
+  const box = $('#update-box');
+  const action = $('#update-action');
+  const showProgress = update.status === 'downloading';
+  box.hidden = !['downloading', 'ready', 'available'].includes(update.status);
+  $('#update-progress').hidden = !showProgress;
+  action.hidden = showProgress;
+
+  if (update.status === 'downloading') {
+    $('#update-text').textContent = `새 버전 ${update.version} 받는 중 ${update.percent || 0}%`;
+    $('#update-progress-fill').style.width = `${update.percent || 0}%`;
+  } else if (update.status === 'ready') {
+    $('#update-text').textContent = `새 버전 ${update.version} 준비 완료`;
+    action.textContent = '재시작해서 설치';
+  } else if (update.status === 'available') {
+    $('#update-text').textContent = `새 버전 ${update.version} 이 나왔습니다`;
+    action.textContent = '받으러 가기';
+  }
+}
+
+async function runUpdateAction() {
+  const { update, releasesUrl } = state.info;
+
+  try {
+    if (update.status === 'ready') {
+      await unwrap(api.installUpdate());
+    } else if (update.status === 'available') {
+      await unwrap(api.openExternal(releasesUrl));
+    }
+  } catch (error) {
+    showError(error);
+  }
+}
+
+/* ── 설정 가져오기 ─────────────────────────────── */
+
+async function loadImportSources() {
+  const list = $('#import-sources');
+  const notice = $('#import-notice');
+  state.importLoaded = true;
+  notice.hidden = true;
+  list.replaceChildren(el('div', { className: 'empty', text: 'PC에서 가져올 수 있는 설정을 찾는 중...' }));
+
+  let result;
+
+  try {
+    result = await unwrap(api.findImportSources());
+  } catch (error) {
+    list.replaceChildren(el('div', { className: 'empty', text: error.message }));
+    return;
+  }
+
+  list.replaceChildren();
+
+  if (result.lunarSettingsDirectory) {
+    notice.hidden = false;
+    notice.textContent =
+      '루나 클라이언트 자체 기능(루나의 줌·프리룩·HUD 위치 등)의 설정은 형식이 달라 자동으로 옮길 수 없습니다.\n' +
+      '게임 안에서 오른쪽 Shift 를 눌러 Cafeteria 설정 메뉴에서 다시 맞춰 주세요. 아래 항목(게임 설정, 서버 목록, 미니맵 등)은 그대로 가져올 수 있습니다.';
+  }
+
+  if (result.sources.length === 0) {
+    list.append(
+      el('div', {
+        className: 'empty',
+        text:
+          '가져올 수 있는 설정을 찾지 못했습니다.\n' +
+          '루나 런처에서 프로필 설정(톱니바퀴) → Mods 탭의 폴더 아이콘을 누르면 실제 폴더가 열립니다.\n' +
+          '그 위치를 확인한 뒤 options.txt 나 config 폴더가 들어 있는 게임 폴더를 "폴더 직접 선택"으로 골라 주세요.',
+      }),
+    );
+    return;
+  }
+
+  for (const source of result.sources) {
+    list.append(sourceCard(source));
+  }
+}
+
+function sourceCard(source) {
+  const checkboxes = new Map();
+  const card = el('div', { className: 'source' }, [
+    el('div', { className: 'source-title', text: source.label }),
+    el('div', { className: 'source-path', text: source.directory }),
+  ]);
+
+  for (const item of source.items) {
+    const checkbox = el('input', { attrs: { type: 'checkbox', 'data-item': item.id } });
+    checkbox.checked = item.selected;
+    checkboxes.set(item.id, checkbox);
+    card.append(
+      el('label', { className: 'import-item' }, [
+        checkbox,
+        el('div', { className: 'import-item-text' }, [el('strong', { text: item.label }), el('span', { text: item.description })]),
+        el('div', { className: 'import-item-size', text: `파일 ${item.files}${item.countCapped ? '+' : ''}개 · ${formatSize(item.bytes)}` }),
+      ]),
+    );
+  }
+
+  const overwrite = el('input', { attrs: { type: 'checkbox' } });
+  const button = el('button', { className: 'button primary', text: '가져오기', attrs: { type: 'button' } });
+  button.addEventListener('click', async () => {
+    const itemIds = [...checkboxes].filter(([, checkbox]) => checkbox.checked).map(([id]) => id);
+
+    if (itemIds.length === 0) {
+      toast('가져올 항목을 하나 이상 골라 주세요.', 'error');
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = '복사 중...';
+
+    try {
+      const result = await unwrap(api.runImport(source.directory, itemIds, overwrite.checked));
+      const skipped = result.skipped > 0 ? `\n이미 있어서 건너뛴 파일 ${result.skipped}개 (덮어쓰려면 "이미 있는 파일 덮어쓰기"를 켜세요)` : '';
+      toast(`파일 ${result.copied}개를 가져왔습니다.${skipped}`, 'success');
+    } catch (error) {
+      showError(error);
+    } finally {
+      button.disabled = false;
+      button.textContent = '가져오기';
+    }
+  });
+
+  card.append(el('div', { className: 'source-footer' }, [el('label', {}, [overwrite, el('span', { text: '이미 있는 파일 덮어쓰기' })]), button]));
+  return card;
+}
+
+async function chooseImportFolder() {
+  try {
+    const source = await unwrap(api.chooseImportFolder());
+
+    if (!source) {
+      return;
+    }
+
+    if (source.items.length === 0) {
+      toast('이 폴더에는 가져올 수 있는 설정이 없습니다.\noptions.txt 나 config 폴더가 들어 있는 게임 폴더를 골라 주세요.', 'error');
+      return;
+    }
+
+    const list = $('#import-sources');
+    const empty = list.querySelector('.empty');
+
+    if (empty) {
+      empty.remove();
+    }
+
+    list.prepend(sourceCard(source));
+  } catch (error) {
+    showError(error);
+  }
 }
 
 function setNotice(message, kind) {
@@ -443,6 +619,19 @@ function bindEvents() {
     }
   });
 
+  api.onUpdateState(renderUpdate);
+  api.onModsUpdated(() => {
+    if ($('#view-mods').classList.contains('active')) {
+      refreshMods();
+    }
+  });
+  $('#update-action').addEventListener('click', runUpdateAction);
+  $('#setting-check-update').addEventListener('click', () => unwrap(api.checkForUpdates()).then(renderUpdate).catch(showError));
+
+  // 설정 가져오기
+  $('#import-rescan').addEventListener('click', loadImportSources);
+  $('#import-choose').addEventListener('click', chooseImportFolder);
+
   // 내 모드
   $('#mods-add').addEventListener('click', () => unwrap(api.addModFiles()).then(reportAdded).catch(showError));
   $('#mods-open-folder').addEventListener('click', () => unwrap(api.openModsFolder()).catch(showError));
@@ -526,6 +715,7 @@ function bindEvents() {
   $('#setting-choose-java').addEventListener('click', () => unwrap(api.chooseJava()).then(refreshState).catch(showError));
   $('#setting-reset-java').addEventListener('click', () => saveSettings({ javaPath: '' }));
   $('#setting-close').addEventListener('change', (event) => saveSettings({ closeOnLaunch: event.target.checked }));
+  $('#setting-auto-update').addEventListener('change', (event) => saveSettings({ autoUpdate: event.target.checked }));
   $('#setting-open-logs').addEventListener('click', () => unwrap(api.openLogsFolder()).catch(showError));
 
   $('#setting-repair').addEventListener('click', async (event) => {

@@ -1,7 +1,7 @@
 {
   "name": "cafeteria-launcher",
   "productName": "Cafeteria",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "카페테리아 - Minecraft 1.21.4 PvP 클라이언트 런처",
   "author": "Cafeteria",
   "private": true,
@@ -14,7 +14,8 @@
     "build:win": "node scripts/build-win.js"
   },
   "dependencies": {
-    "adm-zip": "0.6.1"
+    "adm-zip": "0.6.1",
+    "electron-updater": "6.8.11"
   },
   "devDependencies": {
     "electron": "45.4.1",
@@ -24,7 +25,11 @@
   "build": {
     "appId": "io.github.lhj080902.cafeteria",
     "productName": "Cafeteria",
-    "publish": null,
+    "publish": {
+      "provider": "github",
+      "owner": "lhj080902",
+      "repo": "cafeteria-client"
+    },
     "directories": {
       "output": "dist"
     },
@@ -58,8 +63,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "Cafeteria",
-      "artifactName": "Cafeteria-Setup-${version}.${ext}",
-      "differentialPackage": false
+      "artifactName": "Cafeteria-Setup-${version}.${ext}"
     }
   }
 }

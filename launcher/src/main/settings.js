@@ -19,6 +19,8 @@ const DEFAULTS = Object.freeze({
   /** 게임을 실행할 Java 실행 파일. 비어 있으면 공식 런처에 들어 있는 Java 를 쓴다. */
   javaPath: '',
   closeOnLaunch: false,
+  /** 런처를 켤 때 새 버전이 있는지 확인하고 자동으로 내려받을지 여부. */
+  autoUpdate: true,
   /** 공식 런처 실행 파일 경로. 비어 있으면 자동으로 찾는다. */
   launcherPath: '',
   /** 게임 폴더. 비어 있으면 기본 위치(.cafeteria)를 쓴다. */
@@ -148,7 +150,7 @@ function sanitize(input) {
     result.memoryGb = Math.min(MAX_MEMORY_GB, Math.max(MIN_MEMORY_GB, Math.round(input.memoryGb)));
   }
 
-  for (const name of ['closeOnLaunch', 'resolutionEnabled']) {
+  for (const name of ['closeOnLaunch', 'resolutionEnabled', 'autoUpdate']) {
     if (typeof input[name] === 'boolean') {
       result[name] = input[name];
     }
