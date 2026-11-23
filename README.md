@@ -43,10 +43,13 @@ PvP에 필요한 기능만 기본으로 넣고, 나머지는 런처에서 원하
 ## 사용 방법
 
 1. **공식 Minecraft 런처**를 설치하고 한 번 실행해서 로그인해 둡니다. (정품 Java Edition 계정 필요)
-2. `Cafeteria-1.0.0-win-x64.zip` 의 압축을 풀고 `Cafeteria.exe` 를 실행합니다.
+2. `Cafeteria-Setup-1.0.0.exe` 를 실행해서 설치합니다. 바탕화면과 시작 메뉴에 `Cafeteria` 바로가기가 생깁니다.
+   (설치 없이 쓰고 싶으면 `Cafeteria-1.0.0-win-x64.zip` 의 압축을 풀고 `Cafeteria.exe` 를 실행해도 됩니다.)
 3. **플레이**를 누르면 설치가 끝난 뒤 공식 런처가 열립니다. `Cafeteria` 프로필이 선택된 상태에서 플레이를 누르세요.
 4. 게임 안에서 **오른쪽 Shift** 로 모드 설정 메뉴를 엽니다.
 
+> 삭제는 Windows 설정의 "앱" 목록에서 Cafeteria 를 제거하면 됩니다. 게임 폴더(`%APPDATA%\.cafeteria`)의 모드와 설정은 남습니다.
+>
 > 서명되지 않은 프로그램이라 처음 실행할 때 Windows 가 "Windows의 PC 보호" 경고를 띄울 수 있습니다. "추가 정보 → 실행"을 누르면 됩니다.
 
 ## 알아 둘 점
@@ -108,8 +111,9 @@ npm run build:win
 
 - `npm test` – 단위 테스트. Modrinth 와 Fabric 서버에 실제로 접속하는 검사가 들어 있습니다 (`CAFETERIA_OFFLINE=1` 이면 그 검사는 건너뜀).
 - `node test/e2e/run.js` – 런처를 실제로 띄워 설치 → 플레이 → 모드 설치/삭제 → 설정까지 확인합니다 (Playwright 필요, 진짜 `.minecraft` 는 건드리지 않음). `CAFETERIA_E2E_EXECUTABLE` 에 빌드된 실행 파일 경로를 주면 패키징된 런처를 대상으로 검사합니다.
-- `npm run build:win` – `launcher/dist/Cafeteria-1.0.0-win-x64.zip` 생성. Windows, macOS, Linux 어디서든 빌드됩니다.
-- `npm run build:win:installer` – 설치 프로그램(NSIS) 생성. Windows 에서 실행하거나, Linux/macOS 라면 Wine 이 필요합니다.
+- `npm run build:win` – `launcher/dist/` 에 설치 파일 `Cafeteria-Setup-1.0.0.exe` 와 압축본 `Cafeteria-1.0.0-win-x64.zip` 을 만듭니다. Windows, macOS, Linux 어디서든 빌드됩니다.
+  - Windows 가 아닌 곳에서 설치 파일을 만들려면 원래 Wine 이 필요하지만, `scripts/build-win.js` 가 electron-builder 에 들어 있는 "실행하지 않고 언인스톨러를 꺼내는" 구현을 쓰도록 해서 Wine 없이 빌드합니다. 이 때문에 electron-builder 버전은 고정해 두었습니다.
+  - 빌드가 끝나면 설치 파일과 언인스톨러에 대해 NSIS 무결성 검사(CRC)를 미리 해 보고, 실패하면 빌드를 중단합니다.
 
 버전을 올릴 때는 `mod/gradle.properties` 와 `launcher/src/main/constants.js` 의 버전을 함께 맞춰 주세요.
 
@@ -122,9 +126,10 @@ npm run build:win
 | 런처 로직 | 단위 테스트 73개 (설치, 프로필 등록, 모드 관리, 다운로드 검증, Modrinth 실제 서버) | 통과 |
 | 런처 화면 | Linux 에서 런처를 띄워 전체 흐름 자동 테스트 (소스 실행, 패키징된 실행 파일 둘 다) | 통과 |
 | CurseForge 연동 | API 키가 없어 공식 문서의 응답 형식대로 만든 가짜 응답으로만 검사 | **실제 서버 미검증** |
-| Windows 실행 | 실행 파일 구조·아이콘·버전 정보 검사까지만 수행 | **실제 Windows 미실행** |
+| 설치 파일 | 설치 파일을 풀어서 검사: 설치될 파일 76개가 빌드 결과와 동일, 언인스톨러 포함, NSIS 무결성 검사(CRC) 통과, 아이콘 적용 | 통과 |
+| Windows 실행 | 실행 파일 구조·아이콘·버전 정보 검사까지만 수행. 설치 과정과 프로그램 실행은 해 보지 못함 | **실제 Windows 미실행** |
 
-Windows 에서의 실제 동작(공식 런처 자동 실행 포함)은 Linux 환경에서 확인할 수 없어 직접 실행해 보아야 합니다.
+Windows 에서의 실제 동작(설치 과정, 공식 런처 자동 실행 포함)은 Linux 환경에서 확인할 수 없어 직접 실행해 보아야 합니다.
 
 ## 참고 자료
 

@@ -11,8 +11,7 @@
     "copy-mod": "node scripts/copy-mod.js",
     "test": "node --test \"test/unit/*.test.js\"",
     "test:e2e": "node test/e2e/run.js",
-    "build:win": "node scripts/copy-mod.js && electron-builder --win zip --x64",
-    "build:win:installer": "node scripts/copy-mod.js && electron-builder --win nsis --x64"
+    "build:win": "node scripts/build-win.js"
   },
   "dependencies": {
     "adm-zip": "0.6.1"
@@ -25,6 +24,7 @@
   "build": {
     "appId": "io.github.lhj080902.cafeteria",
     "productName": "Cafeteria",
+    "publish": null,
     "directories": {
       "output": "dist"
     },
@@ -58,7 +58,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "Cafeteria",
-      "artifactName": "Cafeteria-Setup-${version}.${ext}"
+      "artifactName": "Cafeteria-Setup-${version}.${ext}",
+      "differentialPackage": false
     }
   }
 }
