@@ -17,3 +17,7 @@ launcher/resources/mods/*.jar
 
 # 런처 E2E 테스트 스크린샷
 launcher/test/e2e/output/
+
+# Python
+__pycache__/
+*.pyc

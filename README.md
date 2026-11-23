@@ -9,6 +9,7 @@ PvP에 필요한 기능만 기본으로 넣고, 나머지는 런처에서 원하
 | `launcher/` | **Cafeteria 런처** – 설치, 모드 관리, Modrinth/CurseForge 모드 다운로드 (Electron) |
 | `branding/`, `tools/` | 아이콘과 아이콘 생성 스크립트 |
 | `docs/screenshots/` | 테스트에서 찍은 실제 화면 |
+| `CLAUDE.md`, `docs/HANDOFF.md` | 개발을 이어받을 때 읽는 문서 (코드 규칙·명령어, 현재 상태와 남은 일) |
 
 | 게임 안 모드 설정 메뉴 | 런처 |
 | --- | --- |
@@ -182,7 +183,7 @@ npm run build:win
 
 - `npm test` – 단위 테스트. Modrinth 와 Fabric 서버에 실제로 접속하는 검사가 들어 있습니다 (`CAFETERIA_OFFLINE=1` 이면 그 검사는 건너뜀).
 - `node test/e2e/run.js` – 런처를 실제로 띄워 설치 → 플레이 → 모드 설치/삭제 → 설정까지 확인합니다 (Playwright 필요, 진짜 `.minecraft` 는 건드리지 않음). `CAFETERIA_E2E_EXECUTABLE` 에 빌드된 실행 파일 경로를 주면 패키징된 런처를 대상으로 검사합니다.
-- `npm run build:win` – `launcher/dist/` 에 설치 파일 `Cafeteria-Setup-1.2.2.exe`, 압축본 `Cafeteria-1.2.2-win-x64.zip`, 자동 업데이트용 `latest.yml` 과 `.blockmap` 을 만듭니다. Windows, macOS, Linux 어디서든 빌드됩니다.
+- `npm run build:win` – `launcher/dist/` 에 설치 파일 `Cafeteria-Setup-1.2.2.exe`, 압축본 `Cafeteria-1.2.2-win-x64.zip`, 자동 업데이트용 `latest.yml` 과 `.blockmap` 을 만듭니다. Linux 에서 빌드를 확인했습니다 (Windows·macOS 에서는 확인하지 못했습니다).
   - Windows 가 아닌 곳에서 설치 파일을 만들려면 원래 Wine 이 필요하지만, `scripts/build-win.js` 가 electron-builder 에 들어 있는 "실행하지 않고 언인스톨러를 꺼내는" 구현을 쓰도록 해서 Wine 없이 빌드합니다. 이 때문에 electron-builder 버전은 고정해 두었습니다.
   - 빌드가 끝나면 설치 파일과 언인스톨러에 대해 NSIS 무결성 검사(CRC)를 미리 해 보고, 실패하면 빌드를 중단합니다.
 
