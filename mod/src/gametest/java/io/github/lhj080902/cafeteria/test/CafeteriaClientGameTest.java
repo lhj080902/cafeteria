@@ -84,6 +84,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testScreens(context, input);
 			testChatTime(context);
 			testInfiniteChat(context);
+			testHudAboveChat(context);
 			testScreenshotCopy(context, input);
 			testHudEditor(context, input);
 			testHudBoxSelection(context, input);
@@ -436,6 +437,76 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		});
 		check(chatMessages(context).size() == 100, "모듈을 껐는데 100줄로 줄지 않았습니다: " + chatMessages(context).size());
 		context.runOnClient(minecraft -> minecraft.gui.getChat().clearMessages(false));
+	}
+
+	/**
+	 * HUD 는 채팅보다 앞에 그려져야 한다: 채팅 글자로 꽉 찬 자리에 HUD 를 올려놓고,
+	 * HUD 글자색이 그대로 보이는지, 채팅의 흰 글자가 HUD 위로 비치지 않는지 픽셀로 확인한다.
+	 */
+	private static void testHudAboveChat(ClientGameTestContext context) {
+		int[] area = context.computeOnClient(minecraft -> {
+			minecraft.gui.getChat().clearMessages(false);
+
+			// 흰색 꽉 찬 글자로 채팅창을 덮는다.
+			for (int i = 0; i < 8; i++) {
+				minecraft.gui.getChat().addMessage(Component.literal("\u2588".repeat(30)));
+			}
+
+			int width = minecraft.getWindow().getGuiScaledWidth();
+			int height = minecraft.getWindow().getGuiScaledHeight();
+			Modules.FPS.textColor.set(0xFF55FF55);
+			Modules.FPS.shadow.set(false);
+			Modules.FPS.setPosition(minecraft, 60, height - 80, width, height);
+			int scale = (int) minecraft.getWindow().getGuiScale();
+			return new int[] {
+				Modules.FPS.x(minecraft, width) * scale, Modules.FPS.y(minecraft, height) * scale,
+				Modules.FPS.width(minecraft) * scale, Modules.FPS.height(minecraft) * scale
+			};
+		});
+		context.waitTicks(3);
+		BufferedImage image = readImage(context.takeScreenshot("hud-above-chat"));
+		int hudText = 0;
+		int chatWhite = 0;
+
+		for (int y = area[1]; y < area[1] + area[3]; y++) {
+			for (int x = area[0]; x < area[0] + area[2]; x++) {
+				int rgb = image.getRGB(x, y);
+				int red = rgb >> 16 & 0xFF;
+				int green = rgb >> 8 & 0xFF;
+				int blue = rgb & 0xFF;
+
+				// HUD 글자색(연두색)에 가까운 픽셀. 글꼴 가장자리는 배경과 섞여서 정확히 같은 색은 아니다.
+				if (green > 170 && red < 150 && blue < 150) {
+					hudText++;
+				} else if (red > 235 && green > 235 && blue > 235) {
+					chatWhite++;
+				}
+			}
+		}
+
+		// 채팅 글자가 실제로 그 자리를 덮고 있었는지도 확인한다 (HUD 바로 왼쪽은 흰 글자가 그대로 보여야 한다).
+		int besideHud = 0;
+
+		for (int y = area[1]; y < area[1] + area[3]; y++) {
+			for (int x = area[0] - 40; x < area[0] - 4; x++) {
+				int rgb = image.getRGB(x, y);
+
+				if ((rgb >> 16 & 0xFF) > 235 && (rgb >> 8 & 0xFF) > 235 && (rgb & 0xFF) > 235) {
+					besideHud++;
+				}
+			}
+		}
+
+		context.runOnClient(minecraft -> {
+			Modules.FPS.textColor.reset();
+			Modules.FPS.shadow.reset();
+			Modules.FPS.resetPosition();
+			minecraft.gui.getChat().clearMessages(false);
+		});
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 채팅 위의 HUD — HUD 글자 {}픽셀, HUD 위로 비친 채팅 {}픽셀, HUD 옆 채팅 {}픽셀", hudText, chatWhite, besideHud);
+		check(besideHud > 200, "채팅 글자가 HUD 자리 주변을 덮지 않아서 비교할 수 없습니다: " + besideHud);
+		check(hudText > 40, "HUD 글자가 채팅에 가려졌습니다: " + hudText + "픽셀");
+		check(chatWhite == 0, "채팅 글자가 HUD 위에 그려졌습니다: " + chatWhite + "픽셀");
 	}
 
 	/**

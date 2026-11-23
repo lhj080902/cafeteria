@@ -61,8 +61,8 @@ public class CafeteriaClient implements ClientModInitializer {
 
 			return InteractionResult.PASS;
 		});
-		// 채팅보다 아래 레이어에 그려서 채팅창을 가리지 않게 한다.
-		HudLayerRegistrationCallback.EVENT.register(layers -> layers.attachLayerBefore(
+		// 채팅보다 위 레이어에 그려서 채팅 글자와 배경이 HUD 를 가리지 않게 한다. (Tab 플레이어 목록보다는 아래)
+		HudLayerRegistrationCallback.EVENT.register(layers -> layers.attachLayerAfter(
 			IdentifiedLayer.CHAT, ResourceLocation.fromNamespaceAndPath(MOD_ID, "hud"), (graphics, deltaTracker) -> HudRenderer.render(graphics)));
 		// 스크린샷 안내의 [복사] 버튼이 실행하는 명령어: /cafeteria screenshot copy <파일 이름>
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
