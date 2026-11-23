@@ -172,10 +172,12 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	}
 
 	/**
-	 * 줌을 해도 1인칭 손(든 아이템)의 크기와 위치가 그대로인지 스크린샷의 픽셀로 확인한다.
-	 * 주변 풍경에 없는 색(자홍색 콘크리트)을 손에 들려서 그 색이 차지하는 영역을 비교한다.
+	 * 줌과 1인칭 손. 스크린샷의 픽셀로 확인한다 (주변 풍경에 없는 색인 자홍색 콘크리트를 손에 들려서 그 색이 차지하는 영역을 본다).
+	 *  - 기본: 줌하는 동안 손이 화면 아래로 내려가 보이지 않고, 줌을 풀면 제자리로 돌아온다.
+	 *  - "줌 중 손 숨기기"를 끄면: 손이 그대로 보이되 크기와 위치는 평소와 똑같다 (손은 확대되지 않는다).
 	 */
 	private static void testZoomKeepsHand(ClientGameTestContext context, TestInput input, TestServerContext server) {
+		check(Modules.ZOOM.hideHand.get(), "줌 중 손 숨기기는 기본으로 켜져 있어야 합니다");
 		server.runCommand("item replace entity @a weapon.mainhand with minecraft:magenta_concrete");
 		// 손 위에 겹쳐 그려지는 HUD(키스트로크 등)가 비교에 섞이지 않게 잠시 끈다.
 		List<HudElement> shown = context.computeOnClient(minecraft -> Modules.HUD.stream().filter(HudElement::isEnabled).toList());
@@ -185,29 +187,36 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		int[] normal = magentaArea(context.takeScreenshot("hand-normal"));
 		check(normal[0] > 2000, "손에 든 블록이 화면에 보이지 않습니다: " + normal[0] + "픽셀");
 
+		// 1) 기본: 줌하면 손이 사라지고, 풀면 돌아온다.
 		input.holdKey(CafeteriaClient.zoomKey);
 		context.waitTicks(20);
 		check(near(zoomFactor(context), Modules.ZOOM.factor.get()), "줌이 걸리지 않았습니다");
-		int[] zoomed = magentaArea(context.takeScreenshot("hand-zoomed"));
-		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 손 영역(픽셀 수, 왼쪽, 위, 오른쪽, 아래) 평소 {} / 줌 {}", java.util.Arrays.toString(normal), java.util.Arrays.toString(zoomed));
+		int[] hidden = magentaArea(context.takeScreenshot("hand-hidden-while-zooming"));
+		check(hidden[0] == 0, "줌하는 동안 손이 화면에 남아 있습니다: " + hidden[0] + "픽셀");
+		input.releaseKey(CafeteriaClient.zoomKey);
+		context.waitTicks(20);
+		int[] back = magentaArea(context.takeScreenshot("hand-after-zoom"));
+		check(java.util.Arrays.equals(back, normal), "줌을 풀었는데 손이 제자리로 돌아오지 않았습니다: " + java.util.Arrays.toString(normal) + " → " + java.util.Arrays.toString(back));
+
+		// 줌이 걸리는 도중에는 손이 조금만 내려간 상태를 거친다 (갑자기 사라지지 않는다).
+		check(near(context.computeOnClient(minecraft -> (double) Modules.ZOOM.handHiddenAmount()), 0.0), "줌을 풀었는데 손이 내려가 있습니다");
+
+		// 2) 설정을 끄면 줌 중에도 손이 보이고, 크기와 위치는 평소와 똑같다.
+		context.runOnClient(minecraft -> Modules.ZOOM.hideHand.set(false));
+		input.holdKey(CafeteriaClient.zoomKey);
+		context.waitTicks(20);
+		int[] zoomed = magentaArea(context.takeScreenshot("hand-kept-while-zooming"));
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 손 영역(픽셀 수, 왼쪽, 위, 오른쪽, 아래) 평소 {} / 줌(손 숨기기 끔) {}", java.util.Arrays.toString(normal), java.util.Arrays.toString(zoomed));
 		check(Math.abs(zoomed[0] - normal[0]) <= normal[0] / 50, "줌을 하니 손의 크기가 바뀌었습니다: " + normal[0] + " → " + zoomed[0] + "픽셀");
 
 		for (int i = 1; i < 5; i++) {
 			check(Math.abs(zoomed[i] - normal[i]) <= 2, "줌을 하니 손의 위치가 바뀌었습니다: " + java.util.Arrays.toString(normal) + " → " + java.util.Arrays.toString(zoomed));
 		}
 
-		// "줌 중 손 숨기기"를 켜면 확대하는 동안에만 손이 사라진다.
-		context.runOnClient(minecraft -> Modules.ZOOM.hideHand.set(true));
-		context.waitTicks(3);
-		int[] hidden = magentaArea(context.takeScreenshot("hand-hidden-while-zooming"));
-		check(hidden[0] == 0, "줌 중 손 숨기기를 켰는데 손이 보입니다: " + hidden[0] + "픽셀");
 		input.releaseKey(CafeteriaClient.zoomKey);
 		context.waitTicks(20);
-		int[] back = magentaArea(context.takeScreenshot("hand-after-zoom"));
-		check(Math.abs(back[0] - normal[0]) <= normal[0] / 50, "줌을 풀었는데 손이 돌아오지 않았습니다: " + back[0] + "픽셀");
-
 		context.runOnClient(minecraft -> {
-			Modules.ZOOM.hideHand.set(false);
+			Modules.ZOOM.hideHand.reset();
 			shown.forEach(element -> element.setEnabled(true));
 		});
 		server.runCommand("item replace entity @a weapon.mainhand with minecraft:air");

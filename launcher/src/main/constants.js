@@ -32,7 +32,7 @@ module.exports = {
   CAFETERIA_MOD_ID: 'cafeteria',
   CAFETERIA_MOD_FILE_PREFIX: 'cafeteria-client-',
 
-  USER_AGENT: 'CafeteriaLauncher/1.2.1',
+  USER_AGENT: 'CafeteriaLauncher/1.2.2',
 
   /** 새 버전 설치 파일이 올라오는 곳 (자동 업데이트를 지원하지 않는 실행 방식에서 안내하는 페이지). */
   RELEASES_URL: 'https://github.com/lhj080902/cafeteria/releases/latest',

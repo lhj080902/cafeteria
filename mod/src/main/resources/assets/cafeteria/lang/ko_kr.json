@@ -88,7 +88,6 @@
 	"cafeteria.direction.west": "서 (-X)",
 	"cafeteria.hud_edit.hint3": "빈 곳을 끌면 박스로 여러 개 선택 · Ctrl+클릭: 선택 추가/해제 · Ctrl+A: 전체",
 	"cafeteria.hud_edit.selected_count": "%s개 선택",
-	"cafeteria.setting.zoom_hide_hand": "줌 중 손 숨기기",
 	"cafeteria.module.menu_background": "깨끗한 메뉴 배경",
 	"cafeteria.module.menu_background.desc": "메뉴 배경을 검게 가리지 않음",
 	"cafeteria.setting.menu_blur": "배경 흐림",
@@ -114,5 +113,6 @@
 	"cafeteria.screenshot.copy_failed": "스크린샷을 복사하지 못했습니다: %s",
 	"cafeteria.screenshot.not_found": "그 스크린샷 파일을 찾을 수 없습니다",
 	"cafeteria.setting.potion_icons": "효과 아이콘",
-	"cafeteria.setting.potion_hide_vanilla": "기본 아이콘 숨김"
+	"cafeteria.setting.potion_hide_vanilla": "기본 아이콘 숨김",
+	"cafeteria.setting.zoom_hand_hidden": "줌 중 손 숨기기"
 }

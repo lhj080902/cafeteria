@@ -9,20 +9,23 @@ import net.minecraft.util.Mth;
 
 /**
  * 줌. 키를 누르는 동안 시야각(FOV)을 배율만큼 나눈다.
- * 월드를 그릴 때만 적용되고 손(아이템)의 크기는 바뀌지 않는다.
+ * 월드를 그릴 때만 적용되고 손(아이템)의 크기는 바뀌지 않는다. 대신 줌하는 동안 손을 화면 아래로 내릴 수 있다.
  * GameRendererMixin 이 프레임마다 currentFactor() 를 호출하므로 전환 애니메이션은 실제 경과 시간 기준으로 계산한다.
  */
 public class ZoomModule extends Module {
 	private static final double MIN_SCROLL = 0.25;
 	private static final double MAX_SCROLL = 8.0;
 	private static final double MAX_FACTOR = 40.0;
+	/** 배율이 1 에서 이만큼 커지는 동안 손이 완전히 내려간다 (1.4배면 화면 밖). */
+	private static final double HAND_HIDE_RANGE = 0.4;
 
 	public final NumberSetting factor = add(new NumberSetting("zoom_factor", 4.0, 1.5, 10.0, 0.5, "x"));
 	public final BooleanSetting smooth = add(new BooleanSetting("zoom_smooth", true));
 	public final BooleanSetting scrollAdjust = add(new BooleanSetting("zoom_scroll", true));
 	public final BooleanSetting reduceSensitivity = add(new BooleanSetting("zoom_sensitivity", true));
 	public final BooleanSetting cinematic = add(new BooleanSetting("zoom_cinematic", false));
-	public final BooleanSetting hideHand = add(new BooleanSetting("zoom_hide_hand", false));
+	/** 줌하는 동안 1인칭 손(든 아이템)을 화면 아래로 내려서 시야를 가리지 않게 한다 (옵티파인·루나의 줌과 같은 모습). */
+	public final BooleanSetting hideHand = add(new BooleanSetting("zoom_hand_hidden", true));
 
 	private boolean zooming;
 	private double scroll = 1.0;
@@ -84,9 +87,17 @@ public class ZoomModule extends Module {
 		return (float) current;
 	}
 
-	/** 확대하는 동안 1인칭 손을 숨길지. */
-	public boolean hidesHand() {
-		return isEnabled() && hideHand.get() && current > 1.01;
+	/**
+	 * 줌 때문에 1인칭 손을 화면 아래로 얼마나 내릴지 (0 = 평소 위치, 1 = 화면 밖).
+	 * 확대가 시작되면 부드럽게 내려가고, 줌을 풀면 다시 올라온다.
+	 */
+	public float handHiddenAmount() {
+		if (!isEnabled() || !hideHand.get()) {
+			return 0.0F;
+		}
+
+		double progress = Mth.clamp((current - 1.0) / HAND_HIDE_RANGE, 0.0, 1.0);
+		return (float) (progress * progress * (3.0 - 2.0 * progress));
 	}
 
 	/** 확대한 만큼 마우스 감도를 낮춰서 조준이 튀지 않게 한다. */

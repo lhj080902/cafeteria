@@ -88,7 +88,6 @@
 	"cafeteria.direction.west": "W (-X)",
 	"cafeteria.hud_edit.hint3": "Drag empty space to box-select · Ctrl+click: add/remove · Ctrl+A: all",
 	"cafeteria.hud_edit.selected_count": "%s selected",
-	"cafeteria.setting.zoom_hide_hand": "Hide hand while zooming",
 	"cafeteria.module.menu_background": "Clear Menu Background",
 	"cafeteria.module.menu_background.desc": "No black or blurred menu backdrop",
 	"cafeteria.setting.menu_blur": "Background blur",
@@ -114,5 +113,6 @@
 	"cafeteria.screenshot.copy_failed": "Could not copy the screenshot: %s",
 	"cafeteria.screenshot.not_found": "That screenshot file was not found",
 	"cafeteria.setting.potion_icons": "Effect icons",
-	"cafeteria.setting.potion_hide_vanilla": "Hide vanilla icons"
+	"cafeteria.setting.potion_hide_vanilla": "Hide vanilla icons",
+	"cafeteria.setting.zoom_hand_hidden": "Hide hand while zooming"
 }
