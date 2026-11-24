@@ -2272,7 +2272,11 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		int[] wall = centerColor(context, "fog-wall-air");
 		check(isLime(wall), "안개 검사용 벽이 화면 가운데에 보이지 않습니다: " + Arrays.toString(wall));
 
-		// 1) 용암 속
+		// 1) 용암 속. 몸에 붙은 불꽃이 화면 한가운데까지 올라오므로 낮은 화염으로 내려 둔다.
+		context.runOnClient(minecraft -> {
+			Modules.LOW_FIRE.setEnabled(true);
+			Modules.LOW_FIRE.amount.set(100.0);
+		});
 		server.runCommand(here + channel + "lava");
 		context.waitTicks(20);
 		int[] lavaFog = centerColor(context, "fog-lava-normal");
@@ -2288,6 +2292,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.runOnClient(minecraft -> {
 			Modules.NO_FOG.lava.reset();
 			Modules.NO_FOG.setEnabled(false);
+			Modules.LOW_FIRE.setEnabled(false);
+			Modules.LOW_FIRE.amount.reset();
 		});
 
 		// 2) 물속. 물속 시야는 들어간 뒤 시간이 지날수록 넓어지므로, 끈 상태는 들어가자마자 잰다.

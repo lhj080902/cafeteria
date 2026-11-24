@@ -7,6 +7,7 @@
 		"CameraMixin",
 		"ChatComponentMixin",
 		"EntityRenderDispatcherMixin",
+		"FogRendererMixin",
 		"GameRendererMixin",
 		"GuiMixin",
 		"KeyboardHandlerMixin",
