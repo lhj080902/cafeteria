@@ -38,11 +38,13 @@ jobs:
             task: runProductionClientGameTest
             run_dir: productionClientGameTest
             extra_mods: xaero
+            loaded_mod: "- xaerominimap 26.5.0"
           # Sodium 은 지형을 직접 그린다. 안개 제거가 Sodium 이 그린 지형에도 먹히는지 본다.
           - name: productionClientGameTest-sodium
             task: runProductionClientGameTest
             run_dir: productionClientGameTest
             extra_mods: sodium
+            loaded_mod: "- sodium 0.6.13"
     defaults:
       run:
         # bash 를 적어 줘야 pipefail 이 켜진다. 없으면 "gradlew | tee" 에서 gradlew 의 실패가 가려진다.
@@ -100,6 +102,12 @@ jobs:
       - name: 모든 검사가 실제로 돌았는지 확인
         run: |
           grep -q "CAFETERIA GAMETEST: 모든 검사를 통과했습니다" gametest-output.log
+
+      # 모드 파일이 빠진 채로 돌았는데 통과로 끝나는 일을 막는다 (Fabric Loader 가 올린 모드 목록을 본다).
+      - name: 함께 돌린 모드가 실제로 올라갔는지 확인
+        if: matrix.extra_mods
+        run: |
+          grep -qF -- "${{ matrix.loaded_mod }}" gametest-output.log
 
       - name: 스크린샷과 로그 올리기
         if: always()
