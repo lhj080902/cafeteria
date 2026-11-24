@@ -9,7 +9,7 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 - 릴리스된 최신 버전: **1.3.0** (모드와 런처가 같은 번호를 쓴다)
 - 릴리스: [v1.3.0](https://github.com/lhj080902/cafeteria/releases/tag/v1.3.0) – `Cafeteria-Setup-1.3.0.exe`, `.blockmap`, `latest.yml` 세 파일이 올라가 있다. 릴리스에서 받은 `latest.yml` 이 빌드 결과와 같고, 그 해시·크기가 설치 파일과 일치하는 것을 확인했다.
 - **1.3.0 은 2026-11-24 에 릴리스했다.** 런처 안 Microsoft 로그인과 게임 바로 실행을 넣었고, 모드 코드는 바뀌지 않았다(번호만 맞춤). 같은 날 실제 Windows PC 에서 로그인, 게임 실행, 1.2.2 설치본의 자동 업데이트를 확인했다(3번 표). 태그 `v1.3.0` 은 `main` 의 `6021fde` 이고, 설치 파일은 그 바로 앞 커밋 `9d5f98f` 에서 빌드했다. 두 커밋의 차이는 게임 테스트 소스(`src/gametest`) 한 줄뿐이고 배포용 jar 와 런처에는 들어가지 않는다.
-- **1.4.0 은 릴리스 전이다** (2026-11-24, 작업 브랜치 `feature/hud-resize`). 모드의 HUD 편집 개선: 꼭짓점을 끌어 1% 단위로 크기 조절, 타이틀·스코어보드·보스바 위치·크기, 채팅 배율. 런처 코드는 바뀌지 않았다(번호만 맞춤). `./gradlew build` 와 `compileGametestJava` 는 성공했고, **새로 넣은 게임 테스트는 아직 한 번도 실행하지 못했다** (3번 표). 릴리스는 사용자가 따로 승인해야 한다.
+- **1.4.0 은 릴리스 전이다** (2026-11-24, 작업 브랜치 `feature/hud-resize`). 모드의 HUD 편집 개선: 꼭짓점을 끌어 1% 단위로 크기 조절, 타이틀·스코어보드·보스바 위치·크기, 채팅 배율. 런처 코드는 바뀌지 않았다(번호만 맞춤). 게임 테스트는 개발 환경과 배포용 jar 모두 GitHub Actions 에서 통과했다 (3번 표). 실제 Windows PC 에서 새 기능을 써 본 적은 아직 없다. 릴리스는 사용자가 따로 승인해야 한다.
 - 대상: Minecraft 1.21.4, Fabric Loader 0.20.1, Fabric API 0.119.4+1.21.4, Windows. (버전은 `mod/gradle.properties` 와 `launcher/src/main/constants.js` 에서 맞춘다)
 
 ### 사용자가 처음에 정한 것
@@ -71,11 +71,13 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 
 1.2.2 까지의 검증은 모두 **Linux 컨테이너**에서 했다. 1.3.0 작업 중에 Windows 에서 단위 테스트와 짧은 부팅 검사를 처음 돌렸다 (아래 표).
 
+1.4.0 부터 모드 게임 테스트는 **GitHub Actions** 가 돌린다 (`.github/workflows/gametest.yml`). `mod/` 가 바뀐 push 마다 개발 환경과 배포용 jar 를 따로 실행하고, 스크린샷과 로그를 실행 결과에 붙인다 (`gh run download <번호>`). 개발 PC 에서는 게임 테스트가 게임 창을 띄워서 사용자가 게임을 하는 동안 돌릴 수 없기 때문에 넣었다. Linux 에서 도는 것이라 Windows 전용 동작은 확인되지 않는다.
+
 | 대상 | 결과 |
 | --- | --- |
-| 모드 게임 테스트 (개발 환경, 배포용 jar) | 1.3.0 까지 통과. 1.4.0 에서는 실행하지 못함 (아래 줄) |
+| 모드 게임 테스트 (개발 환경, 배포용 jar) | 1.4.0 까지 통과 (1.4.0 은 아래 줄) |
 | 모드 + Xaero's Minimap 26.5.0 + World Map 1.46.0 + FastPack 0.3.1 | 1.3.0 까지 통과. 1.4.0 은 바닐라 메서드 4곳을 새로 감싸므로 다시 돌려야 한다 |
-| **모드 1.4.0 게임 테스트** (`testHudResizeHandles`, `testTitlePlacement`, `testScoreboardPlacement`, `testBossbarPlacement`, `testChatScale`, `testConfig` 추가분) | **미검증.** 컴파일만 확인했다. 게임 테스트는 게임 창을 띄우는데, 작업하는 동안 사용자가 같은 PC 에서 게임을 하고 있어서 돌리지 않았다. 이 PC 에서는 기존 게임 테스트도 아직 돌린 적이 없다 |
+| **모드 1.4.0 게임 테스트** (`testHudResizeHandles`, `testTitlePlacement`, `testScoreboardPlacement`, `testBossbarPlacement`, `testChatScale`, `testConfig` 추가분) | 통과 (2026-11-24, GitHub Actions(Linux, xvfb, 소프트웨어 렌더링), 커밋 `55197bd`). 개발 환경과 배포용 jar 둘 다 스크린샷 86장을 찍고 끝까지 돌았다. 첫 실행에서는 기존 포션 아이콘 검사가 배포용 jar 쪽에서 실패했다: 속도 효과의 입자가 카메라 앞에 떠서 재는 자리를 덮은 우연한 실패였고, 검사하는 동안 입자 설정을 "최소"로 두게 고쳤다. 수정 전 코드에서 새 검사가 실패하는 것(검사가 실제로 문제를 잡는지)은 따로 확인하지 않았다. 개발 PC(Windows)에서는 게임 테스트를 돌린 적이 없다 |
 | 런처 단위 테스트 106개 (Modrinth 실제 서버 포함) | 1.2.2 까지 통과 |
 | 런처 단위 테스트 170개 (Mojang·Fabric·Modrinth 실제 서버 포함, Windows) | 1.3.0 작업 브랜치에서 167 통과, 3 건너뜀, 실패 0 |
 | 런처 Windows 부팅 (Electron 45.4.1, 소스 실행, 임시 폴더) | 콘솔 오류 없이 켜짐. 홈(계정 줄, 상태 칩, 플레이 안내)과 설정(게임 실행 방식) 화면이 그려지고, 실행 방식을 바꾸면 홈이 바뀜. 짧은 자동 검사였고 전체 수동 검사는 아님 |
