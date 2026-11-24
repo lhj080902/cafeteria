@@ -29,7 +29,7 @@ Minecraft **1.21.4 (Fabric)** 용 PvP 클라이언트 모드와 Windows 런처. 
 - Gradle 이 결과를 캐시하므로 다시 돌릴 때는 `--rerun` 을 붙인다.
 - 게임 테스트가 중간에 실패하면 실행 폴더에 그때의 설정이 남아서 다음 실행이 엉뚱한 곳에서 실패할 수 있다. 다시 돌리기 전에 `mod/build/run/<실행 폴더>/config/cafeteria.json` 을 지운다.
 - 스크린샷: `mod/build/run/{clientGameTest,productionClientGameTest}/screenshots/`
-- GitHub Actions(`.github/workflows/gametest.yml`)가 `mod/` 가 바뀐 push 마다 두 게임 테스트를 돌린다. 개발 PC 에서 게임 창을 띄울 수 없을 때(사용자가 게임 중일 때)는 작업 브랜치를 push 해서 확인한다: `gh run watch <번호>`, 스크린샷과 로그는 `gh run download <번호>`.
+- GitHub Actions(`.github/workflows/gametest.yml`)가 `mod/` 가 바뀐 push 마다 두 게임 테스트를 돌린다 (배포용 jar 는 Xaero's Minimap·World Map, Sodium 과 함께도 한 번씩). 개발 PC 에서 게임 창을 띄울 수 없을 때(사용자가 게임 중일 때)는 작업 브랜치를 push 해서 확인한다: `gh run watch <번호>`, 스크린샷과 로그는 `gh run download <번호>`.
 
 런처 (`launcher/` 에서, Node.js 22 이상):
 
@@ -45,7 +45,7 @@ npm run build:win       # dist/ 에 Setup.exe, zip, latest.yml, .blockmap
 
 - **전달 전에 실제로 돌려서 확인한다.** 사용자는 "오류 점검 후 작동까지 확인하고 전달"을 원한다. 모드를 고쳤으면 게임 테스트를, 런처를 고쳤으면 단위 테스트(화면이 바뀌면 E2E 도)를 돌린다. 확인하지 못한 것(특히 Windows 실제 동작)은 못 했다고 분명히 말한다.
 - **새 기능에는 게임 테스트를 같이 넣는다.** `mod/src/gametest/.../CafeteriaClientGameTest.java` 는 스크린샷 픽셀까지 재서 검사한다. 배포 환경에서는 클래스·필드 이름이 난독화돼 있으니 리플렉션은 이름이 아니라 형식으로 찾는다.
-- **믹스인**: 핵심 기능(줌, 프리룩, 히트박스, 키 입력)은 필수, 부가 기능(채팅, 메뉴 배경, 스크린샷, 손 숨기기, 포션 아이콘)은 `require = 0` 으로 둬서 다른 모드와 겹쳐도 게임이 꺼지지 않게 한다. `@Redirect`·`@ModifyConstant` 대신 MixinExtras(`@WrapOperation`, `@ModifyExpressionValue` 등)를 쓴다.
+- **믹스인**: 핵심 기능(줌, 프리룩, 히트박스, 키 입력)은 필수, 부가 기능(채팅, 메뉴 배경, 스크린샷, 손 숨기기, 포션 아이콘, 안개 제거)은 `require = 0` 으로 둬서 다른 모드와 겹쳐도 게임이 꺼지지 않게 한다. `@Redirect`·`@ModifyConstant` 대신 MixinExtras(`@WrapOperation`, `@ModifyExpressionValue` 등)를 쓴다.
 - **설정 id 를 바꾸면 저장된 값이 버려진다** (`config/cafeteria.json` 은 id 로 읽는다). 기본값을 모든 사용자에게 새로 적용하려는 경우가 아니면 id 를 바꾸지 않는다.
 - **번역 키**는 `ko_kr.json` 과 `en_us.json` 에 항상 같이 넣는다. 모듈은 `cafeteria.module.<id>`(+`.desc`), 설정은 `cafeteria.setting.<id>`, 선택지는 `cafeteria.mode.<값>`.
 - **런처 보안 규칙**: 화면(renderer)은 `preload.js` 에 노출한 함수만 쓴다. 다운로드는 `constants.js` 의 `DOWNLOAD_HOSTS` 에 있는 곳에서만, 해시 검증 후에 받는다. CurseForge API 키 값은 화면으로 넘기지 않는다. 사용자에게 비밀 값을 채팅에 붙여 넣으라고 하지 않는다.
