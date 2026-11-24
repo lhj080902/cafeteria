@@ -20,6 +20,10 @@ function openLoginWindow({ parent }) {
   const loginSession = session.fromPartition(`cafeteria-login-${Date.now()}`);
   // 런처는 app.userAgentFallback 을 'CafeteriaLauncher/x.y.z' 로 바꿔 두는데, Microsoft 로그인 페이지에는 일반 브라우저 형식을 보낸다.
   loginSession.setUserAgent(`Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`);
+  // 처리기를 두지 않으면 Electron 은 권한 요청을 모두 허락한다. 로그인에는 권한도 다운로드도 필요 없으므로 모두 막는다.
+  loginSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  loginSession.setPermissionCheckHandler(() => false);
+  loginSession.on('will-download', (event) => event.preventDefault());
 
   const loginWindow = new BrowserWindow({
     parent,

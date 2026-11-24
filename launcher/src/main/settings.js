@@ -16,7 +16,7 @@ const DEFAULTS = Object.freeze({
   resolutionHeight: 720,
   /** 기본 JVM 옵션 뒤에 덧붙일 인수. */
   jvmArgs: '',
-  /** 게임을 실행할 Java 실행 파일. 비어 있으면 공식 런처에 들어 있는 Java 를 쓴다. */
+  /** 게임을 실행할 Java 실행 파일. 비어 있으면 바로 실행은 런처가 내려받은 Java 21 을, 공식 런처로 실행은 공식 런처에 들어 있는 Java 를 쓴다. */
   javaPath: '',
   closeOnLaunch: false,
   /** 런처를 켤 때 새 버전이 있는지 확인하고 자동으로 내려받을지 여부. */
@@ -83,7 +83,7 @@ class SettingsStore {
     return this.publicView();
   }
 
-  /** 공식 런처 프로필에 넣을 실행 옵션. */
+  /** 게임 실행 옵션. 바로 실행에서는 실행 인수를 만들 때 쓰고, 공식 런처로 실행에서는 공식 런처 프로필에 넣는다. */
   profileOptions() {
     const { memoryGb, jvmArgs, javaPath, resolutionEnabled, resolutionWidth, resolutionHeight } = this.values;
     return {

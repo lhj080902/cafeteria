@@ -235,6 +235,22 @@ function createWindow() {
   window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 }
 
+/** 로그에 남겨도 되는 오류 정보 키. 토큰이나 실행 인수가 들어갈 수 있는 값은 넣지 않는다. */
+const LOGGED_DETAIL_KEYS = ['step', 'status', 'cause', 'url', 'algorithm', 'javaPath'];
+
+/** 오류 details 에서 위 키만 골라 한 줄로 만든다. 없으면 빈 문자열. */
+function loggableDetails(details) {
+  const picked = {};
+
+  for (const key of LOGGED_DETAIL_KEYS) {
+    if (details && details[key] !== undefined) {
+      picked[key] = details[key];
+    }
+  }
+
+  return Object.keys(picked).length ? JSON.stringify(picked) : '';
+}
+
 /**
  * IPC 처리기를 등록한다. 결과는 항상 { ok, data } 또는 { ok: false, error } 형태로 돌려줘서
  * 화면이 한국어 안내문을 그대로 보여 줄 수 있게 한다.
@@ -249,6 +265,11 @@ function handle(channel, handler) {
       return { ok: true, data: await handler(...args) };
     } catch (error) {
       if (error instanceof LauncherError) {
+        // 로그인 창을 닫은 것은 사용자가 고른 일이라 남기지 않는다.
+        if (error.code !== 'LOGIN_CANCELLED') {
+          console.error(`[${channel}]`, error.code, error.message, loggableDetails(error.details));
+        }
+
         return { ok: false, error: { code: error.code, message: error.message, details: error.details } };
       }
 
@@ -387,7 +408,20 @@ function registerHandlers() {
   handle('state:get', currentState);
   handle('game:play', play);
 
-  handle('game:repair', () => exclusive(() => (launchMode() === 'direct' ? repairDirect(directOptions('repair')) : install('repair', true))));
+  handle('game:repair', () =>
+    exclusive(() => {
+      if (launchMode() !== 'direct') {
+        return install('repair', true);
+      }
+
+      // 실행 중인 게임이 쓰고 있는 파일을 바꾸지 않는다.
+      if (game) {
+        throw new LauncherError('GAME_RUNNING', '게임이 실행 중일 때는 설치를 복구할 수 없습니다. 게임을 끈 뒤 다시 시도해 주세요.');
+      }
+
+      return repairDirect(directOptions('repair'));
+    }),
+  );
   handle('game:removeProfile', () => exclusive(() => installer.removeProfile(paths.minecraftDir())));
 
   handle('game:openFolder', async () => {

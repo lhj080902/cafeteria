@@ -20,6 +20,10 @@ const state = {
   playing: false,
   /** 안내 문구(#play-message)를 마지막으로 어느 상황('direct', 'official', 'running')에 맞춰 썼는지 */
   playMessageFor: null,
+  /** 아직 끝나지 않은 login() 호출 수. 0 이 되면 로그인 버튼을 되돌린다. */
+  loginPending: 0,
+  /** 설치 복구가 도는 동안 true. 이때만 'repair' 진행률을 복구 버튼에 쓴다. */
+  repairing: false,
 };
 
 /** 플레이 버튼 옆 기본 안내 문구 */
@@ -384,6 +388,12 @@ function renderPlayButton() {
 
 /** Microsoft 로그인 창을 띄운다. 로그인했으면 true. 사용자가 창을 닫은 것은 오류로 보이지 않는다. */
 async function login() {
+  // 창을 닫은 뒤 토큰을 바꾸는 동안에도 기다리는 중임을 보여 준다. renderState() 는 이 버튼의 문구와 disabled 를 건드리지 않는다.
+  const button = $('#account-login');
+  state.loginPending += 1;
+  button.disabled = true;
+  button.textContent = '로그인 중...';
+
   try {
     state.info.account = await unwrap(api.login());
     renderState();
@@ -395,6 +405,14 @@ async function login() {
     }
 
     return false;
+  } finally {
+    // 플레이와 버튼에서 거의 동시에 시작했으면 마지막 것이 끝날 때 되돌린다.
+    state.loginPending -= 1;
+
+    if (state.loginPending === 0) {
+      button.disabled = false;
+      button.textContent = 'Microsoft 계정으로 로그인';
+    }
   }
 }
 
@@ -840,6 +858,10 @@ function bindEvents() {
     if (progress.scope === 'play') {
       $('#play-message').textContent = progress.message;
       setPlayProgress(progress.fraction);
+    } else if (progress.scope === 'repair') {
+      if (state.repairing) {
+        $('#setting-repair').textContent = `복구 중... ${Math.round(progress.fraction * 100)}%`;
+      }
     } else if (state.installButtons.has(progress.scope)) {
       state.installButtons.get(progress.scope).textContent = `${Math.round(progress.fraction * 100)}%`;
     }
@@ -963,6 +985,7 @@ function bindEvents() {
     const button = event.currentTarget;
     button.disabled = true;
     button.textContent = '복구 중...';
+    state.repairing = true;
 
     try {
       await unwrap(api.repair());
@@ -970,6 +993,7 @@ function bindEvents() {
     } catch (error) {
       showError(error);
     } finally {
+      state.repairing = false;
       button.disabled = false;
       button.textContent = '복구';
       refreshState().catch(showError);
