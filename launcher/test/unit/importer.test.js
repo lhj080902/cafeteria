@@ -69,7 +69,7 @@ test('기본 마인크래프트 폴더와 루나 폴더에서 가져올 수 있�
   const { minecraft, lunar, options } = setup(t);
   const result = await importer.findSources(options);
 
-  assert.deepEqual(result.sources.map((source) => source.directory), [minecraft, path.join(lunar, 'profiles', 'lunar', '1.21')]);
+  assert.deepEqual(result.sources.map((source) => path.normalize(source.directory)), [path.normalize(minecraft), path.join(lunar, 'profiles', 'lunar', '1.21')]);
   assert.equal(result.sources[0].label, '기본 마인크래프트 폴더 (.minecraft)');
   assert.equal(result.sources[1].label, `루나 클라이언트 폴더 (${path.join('profiles', 'lunar', '1.21')})`);
   assert.equal(result.lunarDirectory, lunar);

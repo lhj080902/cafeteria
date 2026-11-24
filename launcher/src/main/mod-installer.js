@@ -67,9 +67,11 @@ async function installMod({ source, projectId, resolveFile, modManager, onProgre
       return;
     }
 
-    const fileName = path.basename(String(file.fileName));
+    // Windows 의 path.basename 은 'a:b.jar' 에서 'a:' 를 드라이브로 보고 잘라 내므로, 자르기 전에 ':' 가 든 이름을 거부한다.
+    const rawFileName = String(file.fileName);
+    const fileName = path.basename(rawFileName);
 
-    if (!SAFE_FILE_NAME.test(fileName)) {
+    if (rawFileName.includes(':') || !SAFE_FILE_NAME.test(fileName)) {
       throw new LauncherError('BAD_FILE_NAME', `"${file.title}"의 파일 이름이 올바르지 않아 설치하지 않았습니다.`);
     }
 
