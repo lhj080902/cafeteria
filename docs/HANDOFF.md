@@ -9,6 +9,7 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 - 릴리스된 최신 버전: **1.3.0** (모드와 런처가 같은 번호를 쓴다)
 - 릴리스: [v1.3.0](https://github.com/lhj080902/cafeteria/releases/tag/v1.3.0) – `Cafeteria-Setup-1.3.0.exe`, `.blockmap`, `latest.yml` 세 파일이 올라가 있다. 릴리스에서 받은 `latest.yml` 이 빌드 결과와 같고, 그 해시·크기가 설치 파일과 일치하는 것을 확인했다.
 - **1.3.0 은 2026-11-24 에 릴리스했다.** 런처 안 Microsoft 로그인과 게임 바로 실행을 넣었고, 모드 코드는 바뀌지 않았다(번호만 맞춤). 같은 날 실제 Windows PC 에서 로그인, 게임 실행, 1.2.2 설치본의 자동 업데이트를 확인했다(3번 표). 태그 `v1.3.0` 은 `main` 의 `6021fde` 이고, 설치 파일은 그 바로 앞 커밋 `9d5f98f` 에서 빌드했다. 두 커밋의 차이는 게임 테스트 소스(`src/gametest`) 한 줄뿐이고 배포용 jar 와 런처에는 들어가지 않는다.
+- **1.4.0 은 릴리스 전이다** (2026-11-24, 작업 브랜치 `feature/hud-resize`). 모드의 HUD 편집 개선: 꼭짓점을 끌어 1% 단위로 크기 조절, 타이틀·스코어보드·보스바 위치·크기, 채팅 배율. 런처 코드는 바뀌지 않았다(번호만 맞춤). `./gradlew build` 와 `compileGametestJava` 는 성공했고, **새로 넣은 게임 테스트는 아직 한 번도 실행하지 못했다** (3번 표). 릴리스는 사용자가 따로 승인해야 한다.
 - 대상: Minecraft 1.21.4, Fabric Loader 0.20.1, Fabric API 0.119.4+1.21.4, Windows. (버전은 `mod/gradle.properties` 와 `launcher/src/main/constants.js` 에서 맞춘다)
 
 ### 사용자가 처음에 정한 것
@@ -74,6 +75,7 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 | --- | --- |
 | 모드 게임 테스트 (개발 환경, 배포용 jar) | 통과 |
 | 모드 + Xaero's Minimap 26.5.0 + World Map 1.46.0 + FastPack 0.3.1 | 통과 |
+| **모드 1.4.0 게임 테스트** (`testHudResizeHandles`, `testTitlePlacement`, `testScoreboardPlacement`, `testBossbarPlacement`, `testChatScale`, `testConfig` 추가분) | **미검증.** 컴파일만 확인했다. 게임 테스트는 게임 창을 띄우는데, 작업하는 동안 사용자가 같은 PC 에서 게임을 하고 있어서 돌리지 않았다. 이 PC 에서는 기존 게임 테스트도 아직 돌린 적이 없다 |
 | 런처 단위 테스트 106개 (Modrinth 실제 서버 포함) | 1.2.2 까지 통과 |
 | 런처 단위 테스트 170개 (Mojang·Fabric·Modrinth 실제 서버 포함, Windows) | 1.3.0 작업 브랜치에서 167 통과, 3 건너뜀, 실패 0 |
 | 런처 Windows 부팅 (Electron 45.4.1, 소스 실행, 임시 폴더) | 콘솔 오류 없이 켜짐. 홈(계정 줄, 상태 칩, 플레이 안내)과 설정(게임 실행 방식) 화면이 그려지고, 실행 방식을 바꾸면 홈이 바뀜. 짧은 자동 검사였고 전체 수동 검사는 아님 |
@@ -143,6 +145,15 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 - **Windows 에서 처음 드러난 테스트 2건** (1.3.0 작업을 시작할 때 Windows 의 `npm test` 기준선이 106개 중 2 실패였다. 커밋 `dcf3716`): (1) `importer.test.js` 가 구분자가 다른 경로를 그대로 비교했다. 양쪽을 `path.normalize` 로 맞췄다. (2) `mod-installer.js` 가 `a:b.jar` 같은 이름을 Windows 에서 거부하지 못했다. Windows 의 `path.basename` 이 콜론까지를 잘라 `b.jar` 로 만들기 때문이다. `path.basename` 을 부르기 전에 `:` 가 든 원래 이름을 거부하도록 고쳤다.
 - **클라우드 세션의 제약**(로컬 CLI 에는 없음): 릴리스를 만들 수 없었고, 사용자가 요청하지 않은 외부 모드(Sodium·Iris)를 받아 실행하는 것은 권한 단계에서 거부됐다.
 
+### 1.4.0 의 바닐라 HUD 조절 (타이틀, 스코어보드, 보스바, 채팅)
+
+- 바닐라가 그리는 것을 다시 그리지 않는다. 그리기 메서드(`Gui.renderTitle`, `Gui.displayScoreboardSidebar`, `BossHealthOverlay.render`)를 `@WrapMethod`(`require = 0`)로 감싸 이동·배율 변환만 걸고, 예외로 끝나도 변환을 되돌린다. 옮기지 않았고 100%면 변환을 걸지 않아서 화면이 바닐라와 같다.
+- 바닐라가 그릴 상자는 모드가 같은 계산으로 따로 구한다 (`TitleHud.box`, `ScoreboardHud.box`, `BossbarHud.box`). **Minecraft 버전을 올릴 때 바닐라의 배치 숫자가 바뀌었는지 확인해야 한다.** 숫자가 어긋나면 편집 화면의 테두리와 옮긴 자리가 실제 그림과 어긋난다 (게임 테스트가 픽셀로 잡는다).
+- 옮기기 전에는 바닐라 자리를 따른다 (`VanillaHudElement` 의 `moved` 가 false). 크기만 바꾸면 바닐라 상자가 여유 공간에서 차지하던 비율을 유지해서 가운데·오른쪽 끝 정렬이 남는다. 한 번 옮기면(`setPosition`) 다른 HUD 처럼 비율로 기억하고, 설정 파일에 `"moved": true` 로 남는다. 꼭짓점을 끌어도 옮긴 것으로 친다.
+- "화면에 떠 있는지"는 `HudRenderer.frame()` 으로 가린다. 바닐라의 스코어보드·타이틀·보스바는 같은 프레임에서 우리 HUD 레이어(채팅 뒤)보다 먼저 그려진다. 떠 있지 않으면 편집 화면에서만 예시를 그린다.
+- 채팅 배율은 `ChatComponent.getScale()` 과 `getWidth()` 의 반환값에 곱한다 (`@ModifyReturnValue`). 그리기·줄바꿈·마우스 좌표 변환이 모두 이 두 값을 거쳐서 한 줄의 글자 수와 클릭 위치가 유지된다. 채팅은 옮기지 않는다 (사용자가 "배율만"으로 정함).
+- 크기 설정 id 는 그대로 `scale` 이고 단위만 0.1 에서 0.01 로 줄였다. 저장된 값은 그대로 읽힌다.
+
 ## 6. 버전 기록
 
 | 버전 | 내용 |
@@ -153,6 +164,7 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 | 1.2.1 | 포션 효과 HUD 에 효과 아이콘, 바닐라 효과 아이콘 숨기기 옵션 |
 | 1.2.2 | 줌하는 동안 손을 화면 아래로 내림 (기본 켜짐) |
 | 1.3.0 | 런처: Microsoft 로그인(로그인 유지, 로그아웃), 공식 런처 없이 게임 바로 실행(게임 파일과 Java 21 자동 받기, 해시 검증), 설정의 "게임 실행 방식", Windows 에서 드러난 테스트 2건 수정. 모드 코드는 그대로(번호만 맞춤) |
+| 1.4.0 (릴리스 전) | HUD 편집: 꼭짓점을 끌어 크기 조절(1% 단위), 타이틀·스코어보드·보스바 위치·크기, 채팅 배율. 런처 코드는 그대로(번호만 맞춤) |
 
 ## 7. 로컬에서 시작하기
 

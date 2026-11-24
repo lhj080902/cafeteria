@@ -2019,6 +2019,42 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 		check(json.contains("\"zoom_factor\": 6.0") && json.contains("#FF55FF55"), "설정 파일 내용이 예상과 다릅니다");
 
+		// 바닐라 HUD 요소: 옮긴 상태와 자리, 1% 단위 크기가 저장되고 다시 읽힌다.
+		context.runOnClient(minecraft -> {
+			Modules.TITLE.setPosition(minecraft, 30, 40, 400, 200);
+			Modules.CHAT.scale.set(1.37);
+			ConfigManager.save();
+
+			Modules.TITLE.resetPosition();
+			Modules.CHAT.scale.reset();
+			ConfigManager.load();
+		});
+		check(Modules.TITLE.isMoved(), "타이틀을 옮긴 상태를 다시 읽지 못했습니다");
+		int titleX = context.computeOnClient(minecraft -> Modules.TITLE.x(minecraft, 400));
+		int titleY = context.computeOnClient(minecraft -> Modules.TITLE.y(minecraft, 200));
+		check(Math.abs(titleX - 30) <= 1 && Math.abs(titleY - 40) <= 1, "저장한 타이틀 위치를 다시 읽지 못했습니다: " + titleX + ", " + titleY);
+		check(exactly(Modules.CHAT.scale.get(), 1.37), "저장한 채팅 배율(1% 단위)을 다시 읽지 못했습니다: " + Modules.CHAT.scale.get());
+
+		// 1.3.0 까지의 설정 파일(새 요소 항목이 없고 크기가 10% 단위)도 그대로 읽히고, 새 요소는 기본 상태로 남는다.
+		try {
+			context.runOnClient(minecraft -> {
+				Modules.TITLE.resetPosition();
+				Modules.CHAT.scale.reset();
+				Modules.FPS.scale.reset();
+				Files.writeString(file, "{\"modules\":{\"fps\":{\"enabled\":true,\"settings\":{\"scale\":1.3},\"x\":0.25,\"y\":0.5}}}", StandardCharsets.UTF_8);
+				ConfigManager.load();
+			});
+		} catch (java.io.IOException e) {
+			throw new AssertionError("설정 파일을 쓸 수 없습니다: " + file, e);
+		}
+
+		check(exactly(Modules.FPS.scale.get(), 1.3), "예전 설정 파일의 크기를 읽지 못했습니다: " + Modules.FPS.scale.get());
+		int oldX = context.computeOnClient(minecraft -> Modules.FPS.x(minecraft, 400) * 4 - (400 - Modules.FPS.width(minecraft)));
+		check(Math.abs(oldX) <= 4, "예전 설정 파일의 HUD 위치를 읽지 못했습니다");
+		check(!Modules.TITLE.isMoved() && Modules.TITLE.isEnabled() && exactly(Modules.TITLE.scale.get(), 1.0), "예전 설정 파일을 읽은 뒤 타이틀 요소가 기본 상태가 아닙니다");
+		check(Modules.CHAT.isEnabled() && exactly(Modules.CHAT.scale.get(), 1.0), "예전 설정 파일을 읽은 뒤 채팅 요소가 기본 상태가 아닙니다");
+		context.runOnClient(minecraft -> Modules.FPS.scale.reset());
+
 		// 깨진 설정 파일이 있어도 게임이 죽지 않고 현재 값을 유지해야 한다.
 		try {
 			context.runOnClient(minecraft -> {
