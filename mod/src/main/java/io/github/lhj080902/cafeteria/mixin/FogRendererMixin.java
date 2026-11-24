@@ -20,7 +20,7 @@ public abstract class FogRendererMixin {
 	 */
 	@ModifyReturnValue(method = "setupFog", at = @At("RETURN"), require = 0)
 	private static FogParameters cafeteria$clearFog(FogParameters original, Camera camera, FogRenderer.FogMode mode, Vector4f color, float renderDistance, boolean foggy, float partialTick) {
-		if (mode != FogRenderer.FogMode.FOG_TERRAIN || !Modules.NO_FOG.clears(camera.getFluidInCamera())) {
+		if (mode != FogRenderer.FogMode.FOG_TERRAIN || !Modules.NO_FOG.isEnabled() || !Modules.NO_FOG.clears(camera.getFluidInCamera())) {
 			return original;
 		}
 

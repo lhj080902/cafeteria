@@ -20,7 +20,7 @@ public class NoFogModule extends Module {
 		super("no_fog", false);
 	}
 
-	/** 카메라가 이런 곳에 있을 때의 안개를 없앨지. 가루눈 속은 그대로 둔다. */
+	/** 카메라가 이런 곳에 있을 때의 안개를 없앨지. 가루눈 속과 모르는 종류(다른 모드가 추가한 것)는 그대로 둔다. */
 	public boolean clears(FogType type) {
 		if (!isEnabled()) {
 			return false;
@@ -30,7 +30,7 @@ public class NoFogModule extends Module {
 			case NONE -> distance.get();
 			case WATER -> water.get();
 			case LAVA -> lava.get();
-			case POWDER_SNOW -> false;
+			default -> false;
 		};
 	}
 }

@@ -15,6 +15,7 @@ import io.github.lhj080902.cafeteria.util.ScreenshotClipboard;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestClientWorldContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -28,10 +29,12 @@ import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.renderer.FogParameters;
 import net.minecraft.client.renderer.FogRenderer;
+import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
+import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffects;
 import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
@@ -102,7 +105,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testChatScale(context, input);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
-			testNoFog(context, input, server);
+			testNoFog(context, input, server, world.getClientWorld());
 			testConfig(context);
 		}
 
@@ -2252,7 +2255,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	 * 끄면 벽이 안개에 묻히고, 켜면 공기 중에서 본 색 그대로여야 한다 (물속 무늬가 남아 있으면 파란색이 10 가까이 올라간다).
 	 * 통로를 바다 랜턴으로 만들어 블록 밝기가 최대로 고정되므로 공기·물·용암 속에서 벽의 밝기가 같다.
 	 */
-	private static void testNoFog(ClientGameTestContext context, TestInput input, TestServerContext server) {
+	private static void testNoFog(ClientGameTestContext context, TestInput input, TestServerContext server, TestClientWorldContext clientWorld) {
 		check(!Modules.NO_FOG.isEnabled(), "안개 제거는 기본으로 꺼져 있어야 합니다");
 		String here = "execute at @a run ";
 		String channel = "fill ~ ~0.5 ~-26 ~ ~2.5 ~ minecraft:";
@@ -2273,7 +2276,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			minecraft.options.hideGui = true;
 			return before;
 		});
-		context.waitTicks(20);
+		context.waitTicks(5);
+		clientWorld.waitForChunksRender();
 		int[] wall = centerColor(context, "fog-wall-air");
 		check(isLime(wall), "안개 검사용 벽이 화면 가운데에 보이지 않습니다: " + Arrays.toString(wall));
 
@@ -2283,13 +2287,16 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			Modules.LOW_FIRE.amount.set(100.0);
 		});
 		server.runCommand(here + channel + "lava");
-		context.waitTicks(20);
+		context.waitTicks(5);
+		clientWorld.waitForChunksRender();
 		int[] lavaFog = centerColor(context, "fog-lava-normal");
 		check(lavaFog[0] > lavaFog[1] + 60, "용암 속인데 벽이 안개에 묻히지 않았습니다: " + Arrays.toString(lavaFog));
 		context.runOnClient(minecraft -> Modules.NO_FOG.setEnabled(true));
 		nudgeCamera(context, input);
 		int[] lavaClear = centerColor(context, "fog-lava-clear");
 		check(sameColor(lavaClear, wall), "용암 속에서 벽이 보이지 않습니다: " + Arrays.toString(lavaClear) + " / 공기 중 " + Arrays.toString(wall));
+		checkEffectFogKept(context, server, MobEffects.BLINDNESS, "blindness", "용암 속 실명");
+		checkEffectFogKept(context, server, MobEffects.DARKNESS, "darkness", "용암 속 어둠");
 		context.runOnClient(minecraft -> Modules.NO_FOG.lava.set(false));
 		context.waitTicks(3);
 		int[] lavaOff = centerColor(context, "fog-lava-switch-off");
@@ -2303,7 +2310,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 		// 2) 물속. 물속 시야는 들어간 뒤 시간이 지날수록 넓어지므로, 끈 상태는 들어가자마자 잰다.
 		server.runCommand(here + channel + "water");
-		context.waitTicks(15);
+		context.waitTicks(5);
+		clientWorld.waitForChunksRender();
 		int[] waterFog = centerColor(context, "fog-water-normal");
 		check(waterFog[2] > waterFog[1] + 20, "물속인데 벽이 안개에 묻히지 않았습니다: " + Arrays.toString(waterFog));
 		context.runOnClient(minecraft -> Modules.NO_FOG.setEnabled(true));
@@ -2311,6 +2319,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		int[] waterClear = centerColor(context, "fog-water-clear");
 		check(isLime(waterClear), "물속에서 벽이 보이지 않습니다: " + Arrays.toString(waterClear));
 		check(sameColor(waterClear, wall), "물속 무늬가 남아 있습니다: " + Arrays.toString(waterClear) + " / 공기 중 " + Arrays.toString(wall));
+		checkEffectFogKept(context, server, MobEffects.BLINDNESS, "blindness", "물속 실명");
+		checkEffectFogKept(context, server, MobEffects.DARKNESS, "darkness", "물속 어둠");
 		context.runOnClient(minecraft -> Modules.NO_FOG.water.set(false));
 		context.waitTicks(3);
 		int[] waterOff = centerColor(context, "fog-water-switch-off");
@@ -2331,20 +2341,13 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(kept.end() <= 192.0F, "거리 스위치를 껐는데 안개가 없어졌습니다: " + kept);
 		context.runOnClient(minecraft -> Modules.NO_FOG.distance.reset());
 
-		// 실명 효과의 안개는 건드리지 않는다.
-		server.runCommand("effect give @a minecraft:blindness 30 0 true");
-		context.waitFor(minecraft -> minecraft.player.hasEffect(MobEffects.BLINDNESS), 200);
-		FogParameters blind = fog(context, FogRenderer.FogMode.FOG_TERRAIN);
-		check(blind.end() <= 192.0F, "실명 효과의 안개까지 없어졌습니다: " + blind);
-		server.runCommand("effect clear @a minecraft:blindness");
-		context.waitFor(minecraft -> !minecraft.player.hasEffect(MobEffects.BLINDNESS), 200);
-
 		context.runOnClient(minecraft -> {
 			Modules.NO_FOG.setEnabled(false);
 			Modules.NO_FOG.resetSettings();
 			minecraft.options.hideGui = false;
 			minecraft.options.particles().set(particles);
 		});
+		server.runCommand("effect clear @a minecraft:fire_resistance");
 		server.runCommand("execute as @a at @s run tp @s ~ ~-20 ~");
 		server.runCommand(here + "fill ~-1 ~19.5 ~-27 ~1 ~22.5 ~1 minecraft:air");
 		context.waitTicks(5);
@@ -2368,8 +2371,9 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	}
 
 	/**
-	 * 카메라를 아주 조금 돌렸다가 되돌린다. Sodium 은 카메라가 움직여야 그릴 청크 목록을 다시 만들어서,
+	 * 카메라를 아주 조금(1픽셀) 돌렸다가 되돌린다. Sodium 은 카메라가 움직여야 그릴 청크 목록을 다시 만들어서,
 	 * 가만히 선 채로 안개만 걷히면 안개 밖에 있던 청크가 바로 나타나지 않는다 (0.6.13 에서 확인).
+	 * 화면을 닫은 뒤의 첫 이동은 바닐라가 무시해서 한쪽으로만 돌아갈 수도 있다. 벽 색이 고르므로 재는 값은 같다.
 	 */
 	private static void nudgeCamera(ClientGameTestContext context, TestInput input) {
 		input.moveCursor(1.0, 0.0);
@@ -2388,6 +2392,16 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 	private static boolean sameColor(int[] actual, int[] expected) {
 		return Math.abs(actual[0] - expected[0]) <= 4 && Math.abs(actual[1] - expected[1]) <= 4 && Math.abs(actual[2] - expected[2]) <= 4;
+	}
+
+	/** 이 효과를 받은 동안에는 안개 제거가 켜져 있어도 바닐라의 안개 그대로인지 확인한다 (실명은 끝 거리 5칸, 어둠은 15칸 이상). */
+	private static void checkEffectFogKept(ClientGameTestContext context, TestServerContext server, Holder<MobEffect> effect, String id, String label) {
+		server.runCommand("effect give @a minecraft:" + id + " 30 0 true");
+		context.waitFor(minecraft -> minecraft.player.hasEffect(effect), 200);
+		FogParameters kept = fog(context, FogRenderer.FogMode.FOG_TERRAIN);
+		check(kept.end() <= 192.0F, label + " 효과의 안개까지 없어졌습니다: " + kept);
+		server.runCommand("effect clear @a minecraft:" + id);
+		context.waitFor(minecraft -> !minecraft.player.hasEffect(effect), 200);
 	}
 
 	/** 지금 카메라가 있는 곳에서 바닐라가 쓰게 될 안개 값 (렌더 거리 192칸 기준). */
