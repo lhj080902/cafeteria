@@ -3,8 +3,6 @@ package io.github.lhj080902.cafeteria.mixin;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import io.github.lhj080902.cafeteria.Modules;
-import io.github.lhj080902.cafeteria.hud.BossbarHud;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.BossHealthOverlay;
 import net.minecraft.client.gui.components.LerpingBossEvent;
@@ -27,12 +25,7 @@ public abstract class BossHealthOverlayMixin {
 	 */
 	@WrapMethod(method = "render", require = 0)
 	private void cafeteria$placeBossbar(GuiGraphics graphics, Operation<Void> original) {
-		boolean transformed = false;
-
-		if (!events.isEmpty() && Modules.BOSSBAR.isEnabled()) {
-			int[] box = BossbarHud.box(Minecraft.getInstance().font, events.values(), graphics.guiWidth(), graphics.guiHeight());
-			transformed = Modules.BOSSBAR.begin(graphics, box[0], box[1], box[2], box[3]);
-		}
+		boolean transformed = !events.isEmpty() && Modules.BOSSBAR.begin(graphics, events.values());
 
 		try {
 			original.call(graphics);

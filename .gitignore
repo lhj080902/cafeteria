@@ -6,6 +6,8 @@ out/
 *.iml
 .idea/
 .vscode/
+# Eclipse / VS Code Java 확장이 만드는 컴파일 결과
+mod/bin/
 
 # Node / Electron
 node_modules/

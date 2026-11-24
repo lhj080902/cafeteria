@@ -29,6 +29,16 @@ public class ScoreboardHud extends VanillaHudElement {
 	}
 
 	/**
+	 * 믹스인이 바닐라가 사이드바를 그리기 직전에 부른다. 돌려주는 값의 뜻은 {@link VanillaHudElement#begin} 과 같다.
+	 * 상자는 점수 목록을 걸러서 정렬해야 나오므로(바닐라도 그리면서 한 번 한다) 여기서 바로 구하지 않고 식으로 넘긴다.
+	 */
+	public boolean begin(GuiGraphics graphics, Objective objective) {
+		int screenWidth = graphics.guiWidth();
+		int screenHeight = graphics.guiHeight();
+		return begin(graphics, () -> box(Minecraft.getInstance().font, objective, screenWidth, screenHeight));
+	}
+
+	/**
 	 * 바닐라(Gui.displayScoreboardSidebar)가 사이드바를 그리는 상자 {x, y, 너비, 높이}.
 	 * 숨기지 않은 점수 중 15개까지를 보여 주고, 너비는 제목과 "이름: 점수" 중 가장 긴 것을 따른다.
 	 */

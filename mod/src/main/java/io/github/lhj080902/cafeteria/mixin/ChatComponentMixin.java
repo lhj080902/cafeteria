@@ -7,7 +7,9 @@ import net.minecraft.client.GuiMessage;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.util.Mth;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 
 /**
@@ -16,6 +18,12 @@ import org.spongepowered.asm.mixin.injection.ModifyVariable;
  */
 @Mixin(ChatComponent.class)
 public abstract class ChatComponentMixin {
+	/** 채팅 배율을 곱하기 전의 채팅 폭과 글자 배율. 아래 getWidth, getScale 주입이 부를 때마다 적어 둔다. */
+	@Unique
+	private int cafeteria$plainWidth;
+	@Unique
+	private double cafeteria$plainScale;
+
 	/**
 	 * 채팅 시간: 채팅창에 올라가는 메시지 앞에 받은 시각을 붙인다.
 	 * 로그 파일에는 원래 내용이 남도록, 로그를 남긴 다음(logChatMessage 뒤)에 바꾼다.
@@ -37,13 +45,35 @@ public abstract class ChatComponentMixin {
 	 */
 	@ModifyReturnValue(method = "getScale", at = @At("RETURN"), require = 0)
 	private double cafeteria$scaleChat(double original) {
+		cafeteria$plainScale = original;
 		return original * Modules.CHAT.factor();
 	}
 
 	/** 채팅 배율: 폭도 같은 비율로 늘려서 한 줄에 들어가는 글자 수가 그대로이게 한다. */
 	@ModifyReturnValue(method = "getWidth()I", at = @At("RETURN"), require = 0)
 	private int cafeteria$widenChat(int original) {
+		cafeteria$plainWidth = original;
 		return Mth.floor(original * Modules.CHAT.factor());
+	}
+
+	/**
+	 * 채팅 배율: "채팅 안쪽 좌표로 잰 폭"(폭 ÷ 글자 배율)은 배율을 곱하기 전의 두 값으로 구한다.
+	 * 배율을 곱한 폭은 정수로 내림되므로, 그 값을 다시 나누면 1~2픽셀 좁아져서 한 줄에 들어가는 글자 수가 달라질 수 있다.
+	 * 줄바꿈(addMessageToDisplayQueue)과 클릭 범위(getMessageLineIndexAt, handleChatQueueClicked)가 이 값을 쓴다.
+	 * 세 메서드 모두 Mth.floor(double) 을 처음 부르는 곳이 이 계산이고, 바로 앞에서 getWidth 와 getScale 을 부른다.
+	 */
+	@ModifyArg(
+		method = {"addMessageToDisplayQueue", "getMessageLineIndexAt", "handleChatQueueClicked"},
+		at = @At(value = "INVOKE", target = "Lnet/minecraft/util/Mth;floor(D)I", ordinal = 0),
+		require = 0)
+	private double cafeteria$exactInnerWidth(double value) {
+		return cafeteria$plainWidth > 0 && cafeteria$plainScale > 0.0 ? cafeteria$plainWidth / cafeteria$plainScale : value;
+	}
+
+	/** 채팅 배율: 채팅 배경의 폭도 같은 이유로 배율을 곱하기 전의 값으로 구한다 (render 는 float 로 계산한다). */
+	@ModifyArg(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/Mth;ceil(F)I", ordinal = 0), require = 0)
+	private float cafeteria$exactBackgroundWidth(float value) {
+		return cafeteria$plainWidth > 0 && cafeteria$plainScale > 0.0 ? (float) cafeteria$plainWidth / (float) cafeteria$plainScale : value;
 	}
 
 	/** 무한 채팅: 화면에 보이는 줄(줄바꿈된 줄 단위)의 보관 한도 100줄을 늘린다. */

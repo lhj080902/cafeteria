@@ -1394,6 +1394,22 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		return java.util.Arrays.toString(bounds);
 	}
 
+	/** 스크린샷에서 GUI 좌표 (x, y) 둘레 3x3 픽셀의 평균 밝기 (0~255). */
+	private static double brightnessAt(ClientGameTestContext context, BufferedImage image, double x, double y) {
+		double scale = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScale());
+		int centerX = (int) Math.round(x * scale);
+		int centerY = (int) Math.round(y * scale);
+		double sum = 0;
+
+		for (int dy = -1; dy <= 1; dy++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				sum += luminance(image.getRGB(Mth.clamp(centerX + dx, 0, image.getWidth() - 1), Mth.clamp(centerY + dy, 0, image.getHeight() - 1)));
+			}
+		}
+
+		return sum / 9;
+	}
+
 	/** 스크린샷의 상자 안에서 흰색에 가까운 픽셀 수. 편집 화면의 예시 글자(흰색)가 그려졌는지 볼 때 쓴다. */
 	private static int whitePixels(ClientGameTestContext context, BufferedImage image, int[] box) {
 		int scale = context.computeOnClient(minecraft -> (int) minecraft.getWindow().getGuiScale());
@@ -1487,11 +1503,53 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(!Modules.TITLE.isMoved(), "위치를 초기화했는데 옮긴 상태가 남았습니다");
 		check(java.util.Arrays.equals(restored, vanilla), "되돌린 타이틀이 바닐라와 다릅니다: " + describe(vanilla) + " → " + describe(restored));
 
+		// 5-0) 접근성 설정의 "글자 배경"을 "모든 곳"으로 두면 바닐라가 타이틀 뒤에 어두운 배경을 깐다. 요소 상자는 그 배경까지 감싼다.
+		//      배경은 글자(4배) 둘레로 2씩, 화면에서는 8픽셀씩 넓다.
+		//      밝기를 재야 하므로 낮으로 맞춘다 (밤이면 배경이 어두워서 차이가 보이지 않는다).
+		server.runCommand("time set noon");
+		context.waitTicks(5);
+		BufferedImage plainTitle = readImage(context.takeScreenshot("title-no-backdrop"));
+		int[] plainBox = elementBox(context, Modules.TITLE);
+		context.runOnClient(minecraft -> minecraft.options.backgroundForChatOnly().set(false));
+		context.waitTicks(3);
+		BufferedImage backedTitle = readImage(context.takeScreenshot("title-backdrop"));
+		int[] backedBox = elementBox(context, Modules.TITLE);
+		context.runOnClient(minecraft -> minecraft.options.backgroundForChatOnly().set(true));
+		context.waitTicks(3);
+		check(backedBox[0] == plainBox[0] - 8 && backedBox[1] == plainBox[1] - 8 && backedBox[2] == plainBox[2] + 16 && backedBox[3] == plainBox[3] + 16,
+			"글자 배경을 켰을 때 타이틀 상자가 배경만큼 넓어지지 않았습니다: " + java.util.Arrays.toString(plainBox) + " → " + java.util.Arrays.toString(backedBox));
+		// 상자의 네 변에서, 변 바로 안쪽(배경만 있는 곳)은 어두워지고 변 바로 바깥은 그대로여야 한다. 십자선을 피해서 가운데보다 20픽셀 왼쪽을 잰다.
+		double middleY = backedBox[1] + backedBox[3] / 2.0;
+		double sampleX = width / 2.0 - 20;
+		double[][] edges = {
+			{backedBox[0] + 3, middleY, backedBox[0] - 4, middleY},
+			{backedBox[0] + backedBox[2] - 3, middleY, backedBox[0] + backedBox[2] + 4, middleY},
+			{sampleX, backedBox[1] + 3, sampleX, backedBox[1] - 4},
+			{sampleX, backedBox[1] + backedBox[3] - 3, sampleX, backedBox[1] + backedBox[3] + 4},
+		};
+
+		for (double[] edge : edges) {
+			double insideBefore = brightnessAt(context, plainTitle, edge[0], edge[1]);
+			double insideAfter = brightnessAt(context, backedTitle, edge[0], edge[1]);
+			double outsideBefore = brightnessAt(context, plainTitle, edge[2], edge[3]);
+			double outsideAfter = brightnessAt(context, backedTitle, edge[2], edge[3]);
+			check(insideBefore >= 30, "타이틀 뒤의 화면이 너무 어두워서 글자 배경을 잴 수 없습니다: " + java.util.Arrays.toString(edge) + " 밝기 " + round(insideBefore));
+			check(insideAfter <= insideBefore - 12, "타이틀 상자 안쪽인데 글자 배경이 그려지지 않았습니다: " + java.util.Arrays.toString(edge) + " 밝기 " + round(insideBefore) + " → " + round(insideAfter));
+			check(Math.abs(outsideAfter - outsideBefore) <= 8, "타이틀 상자 바깥인데 글자 배경이 그려졌습니다: " + java.util.Arrays.toString(edge) + " 밝기 " + round(outsideBefore) + " → " + round(outsideAfter));
+		}
+
 		// 5-1) 원래 크기로는 화면보다 넓은 타이틀도, 옮기지 않고 화면에 들어가게 줄이면 가운데에 놓인다 (왼쪽에 붙지 않는다).
 		server.runCommand("title @a title {\"text\":\"███████████████\",\"color\":\"aqua\"}");
 		context.waitTicks(10);
 		int[] wideBox = elementBox(context, Modules.TITLE);
 		check(wideBox[2] > width, "이 검사는 타이틀이 화면보다 넓어야 합니다: " + java.util.Arrays.toString(wideBox) + " / 화면 " + width);
+		// 손대지 않은 상태(옮기지 않음, 100%)의 요소 상자는 바닐라가 그리는 자리 그대로다: 화면보다 넓으면 가운데에서 양쪽으로 넘친다.
+		// (편집 화면의 테두리가 실제 그림과 달리 왼쪽 끝에 붙어 보이면 안 된다.)
+		int wideTitleWidth = context.computeOnClient(minecraft -> minecraft.font.width("███████████████"));
+		double[] wide = markerBounds(context, "title-wide");
+		check(wideBox[0] < 0 && wideBox[0] == width / 2 + 4 * (-wideTitleWidth / 2),
+			"화면보다 넓은 타이틀의 요소 상자가 바닐라가 그리는 자리와 다릅니다: " + java.util.Arrays.toString(wideBox) + " / 화면 " + width + ", 글자 너비 " + wideTitleWidth);
+		check(wide[1] <= 8 && wide[3] >= width - 8, "화면보다 넓은 타이틀이 화면 양쪽 끝까지 그려지지 않았습니다: " + describe(wide));
 		context.runOnClient(minecraft -> Modules.TITLE.rescale(minecraft, 0.7, width, height));
 		context.waitTicks(3);
 		double[] shrunk = markerBounds(context, "title-wide-shrunk");
@@ -1633,6 +1691,49 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		});
 		check(markerBounds(context, "scoreboard-removed")[0] == 0, "스코어보드를 지웠는데 화면에 남아 있습니다");
 		check(!context.computeOnClient(Modules.SCOREBOARD::isLive), "스코어보드가 없는데 떠 있다고 판단했습니다");
+
+		// 6) 상자는 필요할 때만 구한다: 손대지 않은 상태(옮기지 않음, 100%)면 그리기 직전에는 구하지 않고, 누가 물어볼 때 한 번만 구한다.
+		//    스코어보드의 상자는 점수 목록을 걸러서 정렬해야 나오므로, 매 프레임 구하면 바닐라가 하는 일을 한 번 더 하게 된다.
+		String lazy = context.computeOnClient(minecraft -> {
+			int[] calls = {0};
+			java.util.function.Supplier<int[]> box = () -> {
+				calls[0]++;
+				return new int[] {width - 61, 50, 60, 40};
+			};
+			net.minecraft.client.gui.GuiGraphics graphics = new net.minecraft.client.gui.GuiGraphics(minecraft, minecraft.renderBuffers().bufferSource());
+			StringBuilder problems = new StringBuilder();
+
+			if (Modules.SCOREBOARD.begin(graphics, box) || calls[0] != 0) {
+				problems.append("손대지 않은 상태인데 그리기 직전에 상자를 구했습니다 (" + calls[0] + "번). ");
+			}
+
+			int x = Modules.SCOREBOARD.x(minecraft, width);
+			int y = Modules.SCOREBOARD.y(minecraft, height);
+			int boxWidth = Modules.SCOREBOARD.width(minecraft);
+
+			if (calls[0] != 1 || x != width - 61 || y != 50 || boxWidth != 60) {
+				problems.append("물어봤을 때 상자를 한 번만 구해야 합니다 (" + calls[0] + "번, x " + x + ", y " + y + ", 너비 " + boxWidth + "). ");
+			}
+
+			Modules.SCOREBOARD.scale.set(1.5);
+			boolean transformed = Modules.SCOREBOARD.begin(graphics, box);
+
+			if (transformed) {
+				graphics.pose().popPose();
+			}
+
+			Modules.SCOREBOARD.scale.reset();
+
+			if (!transformed || calls[0] != 2) {
+				problems.append("크기를 바꿨으면 그리기 직전에 상자를 한 번 구해야 합니다 (" + calls[0] + "번). ");
+			}
+
+			return problems.toString();
+		});
+		check(lazy.isEmpty(), lazy);
+		// 바닐라가 더 그리지 않으면 떠 있지 않은 것으로 돌아간다.
+		context.waitTicks(5);
+		check(!context.computeOnClient(Modules.SCOREBOARD::isLive), "그리기가 멈춘 스코어보드를 계속 떠 있다고 판단합니다");
 	}
 
 	/** 스크린샷의 상자 안에서 편집 화면 보스바 예시의 막대 색(자홍색)인 픽셀 수. */
@@ -1757,6 +1858,61 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.waitTicks(3);
 	}
 
+	/** 기본 글꼴로 쟀을 때 너비가 정확히 target 픽셀이고 띄어쓰기가 없는 글자열. */
+	private static String textOfWidth(ClientGameTestContext context, int target) {
+		return context.computeOnClient(minecraft -> {
+			int unit = minecraft.font.width("a");
+
+			for (String tail : new String[] {"", "i", "l", "ii", "il", "ll", "iil"}) {
+				int rest = target - minecraft.font.width(tail);
+
+				if (rest >= 0 && rest % unit == 0) {
+					String text = "a".repeat(rest / unit) + tail;
+
+					if (minecraft.font.width(text) == target) {
+						return text;
+					}
+				}
+			}
+
+			throw new AssertionError("너비가 " + target + "픽셀인 글자열을 만들 수 없습니다");
+		});
+	}
+
+	/** 채팅창을 비우고 메시지 하나를 넣은 뒤, 그 메시지가 채팅창에서 몇 줄로 나뉘었는지 돌려준다. (필드 이름이 환경마다 달라서 형식으로 찾는다.) */
+	private static int chatLines(ClientGameTestContext context, String text) {
+		return context.computeOnClient(minecraft -> {
+			ChatComponent chat = minecraft.gui.getChat();
+			chat.clearMessages(false);
+			chat.addMessage(Component.literal(text));
+			return countChatLines(chat);
+		});
+	}
+
+	private static int countChatLines(ChatComponent chat) {
+		int lines = 0;
+
+		try {
+			for (Field field : ChatComponent.class.getDeclaredFields()) {
+				if (!List.class.isAssignableFrom(field.getType())) {
+					continue;
+				}
+
+				field.setAccessible(true);
+
+				for (Object entry : (List<?>) field.get(chat)) {
+					if (entry instanceof GuiMessage.Line) {
+						lines++;
+					}
+				}
+			}
+		} catch (IllegalAccessException e) {
+			throw new AssertionError("채팅 줄을 읽을 수 없습니다", e);
+		}
+
+		return lines;
+	}
+
 	/** 채팅의 (x, y) 자리에 있는 글자에 달린 클릭 명령. 없으면 null. 메서드 이름이 환경마다 달라서 형식(Style 을 돌려주고 double 두 개를 받는)으로 찾는다. */
 	private static String chatClickValueAt(ClientGameTestContext context, double x, double y) {
 		try {
@@ -1840,6 +1996,28 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		double[] wrappedLarger = markerBounds(context, "chat-wrapped-125");
 		check(Math.abs((wrappedLarger[4] - wrappedLarger[2]) - (wrapped[4] - wrapped[2]) * 1.25) <= 3 && Math.abs((wrappedLarger[3] - wrappedLarger[1]) - (wrapped[3] - wrapped[1]) * 1.25) <= 3,
 			"배율을 바꾸니 줄바꿈이 달라졌습니다: " + describe(wrapped) + " → " + describe(wrappedLarger));
+
+		// 4-1) 줄바꿈 폭은 배율과 상관없이 100%일 때와 정확히 같다: 그 폭에 꼭 맞는 메시지는 어떤 배율에서도 한 줄이고, 1픽셀 넘는 메시지는 두 줄이다.
+		//      (배율을 곱한 폭은 정수로 내림되므로 그 값을 다시 나누면 1~2픽셀 좁아진다. 그러면 꼭 맞는 메시지가 두 줄로 나뉜다.)
+		boolean chatTime = Modules.CHAT_TIME.isEnabled();
+		context.runOnClient(minecraft -> Modules.CHAT_TIME.setEnabled(false));
+		int wrapWidth = context.computeOnClient(minecraft -> Mth.floor(ChatComponent.getWidth(minecraft.options.chatWidth().get()) / minecraft.options.chatScale().get()));
+		String fits = textOfWidth(context, wrapWidth);
+		String overflows = textOfWidth(context, wrapWidth + 1);
+
+		for (double factor : new double[] {1.0, 0.53, 0.77, 1.37, 1.99}) {
+			context.runOnClient(minecraft -> Modules.CHAT.scale.set(factor));
+			context.waitTicks(3);
+			int fitLines = chatLines(context, fits);
+			int overflowLines = chatLines(context, overflows);
+			check(fitLines == 1 && overflowLines == 2,
+				"배율 " + factor + " 에서 줄바꿈 폭이 100%일 때(" + wrapWidth + ")와 다릅니다: 꼭 맞는 메시지 " + fitLines + "줄, 1픽셀 넘는 메시지 " + overflowLines + "줄");
+		}
+
+		context.runOnClient(minecraft -> {
+			Modules.CHAT_TIME.setEnabled(chatTime);
+			minecraft.gui.getChat().clearMessages(false);
+		});
 
 		// 5) 요소를 끄면 배율이 남아 있어도 바닐라 그대로다.
 		context.runOnClient(minecraft -> {

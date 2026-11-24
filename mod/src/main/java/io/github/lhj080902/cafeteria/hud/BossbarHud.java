@@ -21,6 +21,13 @@ public class BossbarHud extends VanillaHudElement {
 		super("bossbar");
 	}
 
+	/** 믹스인이 바닐라가 보스바를 그리기 직전에 부른다. 돌려주는 값의 뜻은 {@link VanillaHudElement#begin} 과 같다. */
+	public boolean begin(GuiGraphics graphics, Collection<? extends BossEvent> events) {
+		int screenWidth = graphics.guiWidth();
+		int screenHeight = graphics.guiHeight();
+		return begin(graphics, () -> box(Minecraft.getInstance().font, events, screenWidth, screenHeight));
+	}
+
 	/**
 	 * 바닐라가 보스바들을 그리는 상자 {x, y, 너비, 높이}.
 	 * 막대는 화면 가운데에 너비 182로, 이름은 그 위 9픽셀에 가운데 정렬로 그린다. 막대를 하나 그릴 때마다 19씩 내려가고,
