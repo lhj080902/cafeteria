@@ -16,6 +16,17 @@ const state = {
   importLoaded: false,
   /** 마지막으로 확인한 모드 업데이트 (메인 프로세스가 알려 준 것) */
   modUpdates: { updates: [], checked: 0, unknown: [], notes: [], checkedAt: null },
+  /** play() 가 도는 동안 true. 이때는 play() 가 플레이 버튼과 안내 문구를 직접 쓴다. */
+  playing: false,
+  /** 안내 문구(#play-message)를 마지막으로 어느 상황('direct', 'official', 'running')에 맞춰 썼는지 */
+  playMessageFor: null,
+};
+
+/** 플레이 버튼 옆 기본 안내 문구 */
+const PLAY_MESSAGES = {
+  direct: '플레이를 누르면 게임 파일을 확인하고 바로 실행합니다.',
+  official: '플레이를 누르면 설치를 확인하고 공식 Minecraft 런처를 엽니다.',
+  running: '게임이 실행 중입니다.',
 };
 
 /** { ok, data } 응답에서 data 를 꺼낸다. 실패 응답이면 안내문을 담은 오류를 던진다. */
@@ -114,9 +125,18 @@ function renderState() {
   $('#hero-subtitle').textContent = `Minecraft ${info.minecraftVersion} · Fabric Loader ${info.loaderVersion}`;
   $('#browse-subtitle').textContent = `Minecraft ${info.minecraftVersion} · Fabric용 모드만 보여 줍니다.`;
 
+  const direct = info.launch.mode === 'direct';
   const chip = $('#install-status');
 
-  if (!info.status.officialLauncherFound) {
+  if (direct) {
+    if (!info.account.loggedIn) {
+      setChip(chip, '로그인 필요', 'warn');
+    } else if (info.status.installed) {
+      setChip(chip, '준비됨', 'ok');
+    } else {
+      setChip(chip, '설치 전', 'warn');
+    }
+  } else if (!info.status.officialLauncherFound) {
     setChip(chip, '공식 런처 필요', 'error');
   } else if (info.status.installed) {
     setChip(chip, '설치됨', 'ok');
@@ -124,7 +144,21 @@ function renderState() {
     setChip(chip, '설치 전', 'warn');
   }
 
-  $('#launcher-missing').hidden = info.status.officialLauncherFound;
+  $('#launcher-missing').hidden = direct || info.status.officialLauncherFound;
+
+  const { account } = info;
+  $('#account-row').hidden = !direct;
+  $('#account-name').textContent = account.loggedIn ? account.name : '로그인하지 않음';
+  $('#account-login').hidden = account.loggedIn;
+  $('#account-logout').hidden = !account.loggedIn;
+  renderPlayButton();
+
+  for (const button of document.querySelectorAll('#setting-launch-mode [data-launch-mode]')) {
+    button.classList.toggle('active', button.dataset.launchMode === info.launch.mode);
+    button.disabled = !info.launch.directSupported;
+  }
+
+  $('#setting-launch-mode-note').hidden = info.launch.directSupported;
 
   const { settings } = info;
   $('#setting-memory').value = String(settings.memoryGb);
@@ -134,7 +168,7 @@ function renderState() {
   $('#setting-resolution-height').value = String(settings.resolutionHeight);
   $('#setting-resolution-width').disabled = !settings.resolutionEnabled;
   $('#setting-resolution-height').disabled = !settings.resolutionEnabled;
-  $('#setting-java-path').textContent = settings.javaPath || '자동 (공식 런처에 들어 있는 Java 사용)';
+  $('#setting-java-path').textContent = settings.javaPath || (direct ? '자동 (런처가 내려받은 Java 21 사용)' : '자동 (공식 런처에 들어 있는 Java 사용)');
   $('#setting-jvm-args').value = settings.jvmArgs;
   $('#setting-close').checked = settings.closeOnLaunch;
   $('#setting-auto-update').checked = settings.autoUpdate;
@@ -326,18 +360,76 @@ function setPlayProgress(fraction) {
   $('#play-progress-fill').style.width = `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
 }
 
+/**
+ * 플레이 버튼과 기본 안내 문구를 그린다. 플레이를 준비하는 동안에는 play() 가 직접 쓰므로 건드리지 않는다.
+ * 안내 문구는 상황(실행 방식, 게임 실행 여부)이 바뀔 때만 다시 써서, 플레이 결과 안내가 덮이지 않게 한다.
+ */
+function renderPlayButton() {
+  if (state.playing) {
+    return;
+  }
+
+  const { running } = state.info.game;
+  const button = $('#play-button');
+  button.disabled = running;
+  button.textContent = running ? '실행 중' : '플레이';
+
+  const context = running ? 'running' : state.info.launch.mode;
+
+  if (state.playMessageFor !== context) {
+    state.playMessageFor = context;
+    $('#play-message').textContent = PLAY_MESSAGES[context];
+  }
+}
+
+/** Microsoft 로그인 창을 띄운다. 로그인했으면 true. 사용자가 창을 닫은 것은 오류로 보이지 않는다. */
+async function login() {
+  try {
+    state.info.account = await unwrap(api.login());
+    renderState();
+    toast(`${state.info.account.name} 계정으로 로그인했습니다.`);
+    return true;
+  } catch (error) {
+    if (error.code !== 'LOGIN_CANCELLED') {
+      showError(error);
+    }
+
+    return false;
+  }
+}
+
+async function logout() {
+  try {
+    state.info.account = await unwrap(api.logout());
+    renderState();
+  } catch (error) {
+    showError(error);
+  }
+}
+
 async function play() {
   const button = $('#play-button');
+  state.playing = true;
   button.disabled = true;
-  button.textContent = '준비 중...';
   setNotice(null);
-  setPlayProgress(0);
-  $('#play-progress').hidden = false;
 
   try {
+    // 바로 실행은 로그인이 필요하다. 취소하거나 실패하면 플레이하지 않는다.
+    if (state.info.launch.mode === 'direct' && !state.info.account.loggedIn && !(await login())) {
+      return;
+    }
+
+    button.textContent = '준비 중...';
+    setPlayProgress(0);
+    $('#play-progress').hidden = false;
     const result = await unwrap(api.play());
 
-    if (!result.launched) {
+    if (result.mode === 'direct') {
+      $('#play-message').textContent = '게임을 실행했습니다.';
+      // 게임이 끝날 때까지 이 문구를 둔다.
+      state.playMessageFor = 'running';
+      setNotice('게임 안에서는 오른쪽 Shift 로 모드 설정을 엽니다.');
+    } else if (!result.launched) {
       $('#play-message').textContent = '설치는 끝났습니다.';
       setNotice(
         '설치는 끝났지만 공식 Minecraft 런처를 자동으로 열지 못했습니다.\n공식 런처를 직접 실행해서 "Cafeteria" 프로필을 고르거나, 설정에서 런처 위치를 지정해 주세요.',
@@ -353,8 +445,8 @@ async function play() {
     $('#play-message').textContent = '플레이를 준비하지 못했습니다.';
     setNotice(error.message, 'error');
   } finally {
-    button.disabled = false;
-    button.textContent = '플레이';
+    state.playing = false;
+    renderPlayButton();
     $('#play-progress').hidden = true;
     refreshState().catch(showError);
   }
@@ -728,6 +820,21 @@ function bindEvents() {
   }
 
   $('#play-button').addEventListener('click', play);
+  $('#account-login').addEventListener('click', login);
+  $('#account-logout').addEventListener('click', logout);
+
+  api.onGameState((game) => {
+    if (!state.info) {
+      return;
+    }
+
+    state.info.game = { running: game.running };
+    renderState();
+
+    if (!game.running && game.exitCode !== 0 && game.exitCode !== null) {
+      setNotice(`게임이 오류로 종료됐습니다 (코드 ${game.exitCode}). 설정의 로그 폴더에서 latest.log 와 launcher-stderr.log 를 확인해 주세요.`, 'error');
+    }
+  });
 
   api.onProgress((progress) => {
     if (progress.scope === 'play') {
@@ -793,11 +900,11 @@ function bindEvents() {
   document.addEventListener('drop', (event) => event.preventDefault());
 
   // 모드 찾기
-  for (const segment of document.querySelectorAll('.segment')) {
+  for (const segment of document.querySelectorAll('.segment[data-source]')) {
     segment.addEventListener('click', () => {
       state.browse.source = segment.dataset.source;
 
-      for (const other of document.querySelectorAll('.segment')) {
+      for (const other of document.querySelectorAll('.segment[data-source]')) {
         other.classList.toggle('active', other === segment);
       }
 
@@ -820,6 +927,10 @@ function bindEvents() {
     unwrap(api.updateSettings(partial))
       .then(refreshState)
       .catch(showError);
+
+  for (const button of document.querySelectorAll('#setting-launch-mode [data-launch-mode]')) {
+    button.addEventListener('click', () => saveSettings({ launchMode: button.dataset.launchMode }));
+  }
 
   $('#setting-memory').addEventListener('input', (event) => {
     $('#setting-memory-value').textContent = `${event.target.value} GB`;

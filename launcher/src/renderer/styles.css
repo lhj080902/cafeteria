@@ -378,6 +378,24 @@ kbd {
   padding-top: 22px;
 }
 
+/* 계정 줄은 플레이 줄 바로 위에 붙어서 같은 묶음으로 보인다 (바로 실행일 때만 보임). */
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 22px;
+}
+
+.account-row .button {
+  margin-left: auto;
+}
+
+.account-row:not([hidden]) + .play-bar {
+  margin-top: 0;
+  padding-top: 12px;
+}
+
 .play-status {
   flex: 1;
   min-width: 0;
