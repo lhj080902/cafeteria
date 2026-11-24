@@ -34,6 +34,8 @@ public class HudEditScreen extends Screen {
 	private static final int SNAP_DISTANCE = 6;
 	private static final int NO_GUIDE = Integer.MIN_VALUE;
 	private static final int BOX_FILL = 0x33F2A65A;
+	/** 안내문의 위쪽 좌표. 화면 맨 위 가운데는 보스바 자리라서 그 아래에 둔다. */
+	private static final int HINT_TOP = 22;
 	/** 꼭짓점 손잡이의 한 변(픽셀). 테두리의 꼭짓점을 가운데에 두고 그리며, 그려진 네모가 곧 누를 수 있는 영역이다. */
 	private static final int HANDLE_SIZE = 5;
 	/** 꼭짓점의 방향 (가로, 세로). -1 은 왼쪽·위, 1 은 오른쪽·아래. */
@@ -205,10 +207,10 @@ public class HudEditScreen extends Screen {
 			hintWidth = Math.max(hintWidth, font.width(line));
 		}
 
-		graphics.fill(width / 2 - hintWidth / 2 - 6, 6, width / 2 + hintWidth / 2 + 6, 11 + lines.size() * 11, 0xA0000000);
+		graphics.fill(width / 2 - hintWidth / 2 - 6, HINT_TOP, width / 2 + hintWidth / 2 + 6, HINT_TOP + 5 + lines.size() * 11, 0xA0000000);
 
 		for (int i = 0; i < lines.size(); i++) {
-			graphics.drawCenteredString(font, lines.get(i), width / 2, 10 + i * 11, i == 0 ? 0xFFFFFFFF : 0xFFC0C0C0);
+			graphics.drawCenteredString(font, lines.get(i), width / 2, HINT_TOP + 4 + i * 11, i == 0 ? 0xFFFFFFFF : 0xFFC0C0C0);
 		}
 	}
 

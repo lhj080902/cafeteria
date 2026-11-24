@@ -1,6 +1,7 @@
 package io.github.lhj080902.cafeteria;
 
 import io.github.lhj080902.cafeteria.hud.ArmorHud;
+import io.github.lhj080902.cafeteria.hud.BossbarHud;
 import io.github.lhj080902.cafeteria.hud.ComboHud;
 import io.github.lhj080902.cafeteria.hud.CoordinatesHud;
 import io.github.lhj080902.cafeteria.hud.CpsHud;
@@ -62,11 +63,12 @@ public final class Modules {
 	/** 바닐라가 그리는 HUD. 기본 자리는 바닐라가 정하고, 옮기거나 크기를 바꿨을 때만 손을 댄다. */
 	public static final TitleHud TITLE = new TitleHud();
 	public static final ScoreboardHud SCOREBOARD = new ScoreboardHud();
+	public static final BossbarHud BOSSBAR = new BossbarHud();
 
 	/** 설정 화면의 "기능" 묶음. */
 	public static final List<Module> FEATURES = List.of(FREELOOK, ZOOM, HITBOX, FULLBRIGHT, LOW_FIRE, NO_TUTORIAL, MENU_BACKGROUND, CHAT_TIME, INFINITE_CHAT, SCREENSHOT);
 	/** 설정 화면의 "HUD" 묶음이자 화면에 그리는 순서. */
-	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH, TITLE, SCOREBOARD);
+	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH, TITLE, SCOREBOARD, BOSSBAR);
 	public static final List<Module> ALL;
 
 	static {

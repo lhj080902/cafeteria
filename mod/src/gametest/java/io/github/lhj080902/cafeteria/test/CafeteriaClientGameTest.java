@@ -91,6 +91,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testHudBoxSelection(context, input);
 			testTitlePlacement(context, server);
 			testScoreboardPlacement(context, server);
+			testBossbarPlacement(context, server);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
 			testConfig(context);
@@ -1608,6 +1609,116 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		});
 		check(markerBounds(context, "scoreboard-removed")[0] == 0, "스코어보드를 지웠는데 화면에 남아 있습니다");
 		check(!context.computeOnClient(Modules.SCOREBOARD::isLive), "스코어보드가 없는데 떠 있다고 판단했습니다");
+	}
+
+	/** 스크린샷의 상자 안에서 편집 화면 보스바 예시의 막대 색(자홍색)인 픽셀 수. */
+	private static int sampleBarPixels(ClientGameTestContext context, BufferedImage image, int[] box) {
+		int scale = context.computeOnClient(minecraft -> (int) minecraft.getWindow().getGuiScale());
+		int count = 0;
+
+		for (int y = Math.max(0, box[1] * scale); y < Math.min(image.getHeight(), (box[1] + box[3]) * scale); y++) {
+			for (int x = Math.max(0, box[0] * scale); x < Math.min(image.getWidth(), (box[0] + box[2]) * scale); x++) {
+				int rgb = image.getRGB(x, y);
+
+				if ((rgb >> 16 & 0xFF) > 200 && (rgb >> 8 & 0xFF) < 60 && (rgb & 0xFF) > 140) {
+					count++;
+				}
+			}
+		}
+
+		return count;
+	}
+
+	/**
+	 * 보스바(화면 위): 기본 상태는 바닐라와 같고, 크기만 바꾸면 위쪽 가운데에 그대로 있으며, 옮기면 그 자리에 그려진다.
+	 * 보스바가 여러 개면 전체가 한 덩어리다. 보스바가 없을 때 편집 화면에는 예시가 보인다.
+	 */
+	private static void testBossbarPlacement(ClientGameTestContext context, TestServerContext server) {
+		check(Modules.BOSSBAR.isEnabled(), "보스바 요소는 기본으로 켜져 있어야 합니다");
+		int width = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth());
+		int height = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledHeight());
+		check(markerBounds(context, "bossbar-none")[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다");
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.BOSSBAR);
+			}
+		});
+		server.runCommand("bossbar add cafe:test {\"text\":\"███\",\"color\":\"aqua\"}");
+		server.runCommand("bossbar set cafe:test players @a");
+		context.waitTicks(10);
+
+		// 1) 기본 상태는 요소를 끈 것(바닐라 그대로)과 같고, 화면 위쪽 가운데에 있다.
+		context.runOnClient(minecraft -> Modules.BOSSBAR.setEnabled(false));
+		context.waitTicks(3);
+		double[] vanilla = markerBounds(context, "bossbar-vanilla");
+		check(vanilla[0] > 50, "보스바 이름이 화면에 보이지 않습니다: " + describe(vanilla));
+		context.runOnClient(minecraft -> Modules.BOSSBAR.setEnabled(true));
+		context.waitTicks(3);
+		double[] normal = markerBounds(context, "bossbar-default");
+		check(java.util.Arrays.equals(normal, vanilla), "기본 상태의 보스바가 바닐라와 다르게 그려졌습니다: " + describe(vanilla) + " → " + describe(normal));
+		check(Math.abs((normal[1] + normal[3]) / 2 - width / 2.0) <= 2 && normal[2] <= 20, "보스바가 화면 위쪽 가운데에 있지 않습니다: " + describe(normal));
+		check(context.computeOnClient(Modules.BOSSBAR::isLive), "화면에 뜬 보스바를 요소가 알지 못합니다");
+		int[] normalBox = elementBox(context, Modules.BOSSBAR);
+		check(java.util.Arrays.equals(normalBox, new int[] {width / 2 - 91, 3, 182, 14}), "보스바 상자가 바닐라 배치와 다릅니다: " + java.util.Arrays.toString(normalBox));
+		check(inside(normal, normalBox), "보스바 이름이 요소 상자 밖에 그려졌습니다: " + describe(normal));
+
+		// 2) 보스바가 둘이면 둘을 합친 높이가 한 덩어리다.
+		server.runCommand("bossbar add cafe:second {\"text\":\"second\"}");
+		server.runCommand("bossbar set cafe:second players @a");
+		context.waitTicks(10);
+		int[] doubleBox = elementBox(context, Modules.BOSSBAR);
+		check(doubleBox[3] == 19 * 2 - 5 && doubleBox[1] == 3, "보스바 두 개의 상자 높이가 다릅니다: " + java.util.Arrays.toString(doubleBox));
+		server.runCommand("bossbar remove cafe:second");
+		context.waitTicks(10);
+
+		// 3) 옮기지 않고 크기만 바꾸면 위쪽 가운데에 그대로 있다.
+		context.runOnClient(minecraft -> Modules.BOSSBAR.rescale(minecraft, 1.5, width, height));
+		context.waitTicks(3);
+		double[] grown = markerBounds(context, "bossbar-grown");
+		int[] grownBox = elementBox(context, Modules.BOSSBAR);
+		check(!Modules.BOSSBAR.isMoved(), "크기만 바꿨는데 옮긴 것으로 처리됐습니다");
+		check(Math.abs((grown[1] + grown[3]) / 2 - width / 2.0) <= 3 && grownBox[1] <= 4, "크기를 키운 보스바가 위쪽 가운데에서 벗어났습니다: " + describe(grown) + " / 상자 " + java.util.Arrays.toString(grownBox));
+		check(inside(grown, grownBox), "키운 보스바가 요소 상자 밖에 그려졌습니다: " + describe(grown) + " / 상자 " + java.util.Arrays.toString(grownBox));
+		check(Math.abs((grown[3] - grown[1]) - (normal[3] - normal[1]) * 1.5) <= 2, "보스바가 1.5배가 되지 않았습니다: " + describe(normal) + " → " + describe(grown));
+
+		// 4) 왼쪽 아래로 옮기고 절반 크기로 줄이면 그 자리에 그려진다.
+		context.runOnClient(minecraft -> {
+			Modules.BOSSBAR.scale.set(0.5);
+			Modules.BOSSBAR.setPosition(minecraft, 20, height - 60, width, height);
+		});
+		context.waitTicks(3);
+		double[] placed = markerBounds(context, "bossbar-moved-half");
+		int[] placedBox = elementBox(context, Modules.BOSSBAR);
+		check(placedBox[0] == 20 && placedBox[1] == height - 60 && placedBox[2] == 91, "보스바 요소가 옮긴 자리·크기가 아닙니다: " + java.util.Arrays.toString(placedBox));
+		check(inside(placed, placedBox), "옮긴 보스바가 요소 상자 밖에 그려졌습니다: " + describe(placed) + " / 상자 " + java.util.Arrays.toString(placedBox));
+
+		// 5) 보스바를 없애고 되돌린다. 보스바가 없을 때는 편집 화면에서만 예시가 보인다.
+		server.runCommand("bossbar remove cafe:test");
+		context.waitTicks(10);
+		context.runOnClient(minecraft -> {
+			Modules.BOSSBAR.scale.reset();
+			Modules.BOSSBAR.resetPosition();
+		});
+		check(markerBounds(context, "bossbar-removed")[0] == 0, "보스바를 지웠는데 화면에 남아 있습니다");
+		check(!context.computeOnClient(Modules.BOSSBAR::isLive), "보스바가 없는데 떠 있다고 판단했습니다");
+		context.setScreen(() -> new HudEditScreen(null));
+		context.waitTicks(3);
+		int[] sampleBox = elementBox(context, Modules.BOSSBAR);
+		check(sampleBox[1] == 3 && sampleBox[2] >= 182 && sampleBox[3] == 14, "편집 화면의 보스바 예시 상자가 이상합니다: " + java.util.Arrays.toString(sampleBox));
+		BufferedImage editing = readImage(context.takeScreenshot("hud-edit-bossbar-sample"));
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		context.waitTicks(3);
+		BufferedImage plain = readImage(context.takeScreenshot("bossbar-no-sample"));
+		int sampleBar = sampleBarPixels(context, editing, sampleBox);
+		int plainBar = sampleBarPixels(context, plain, sampleBox);
+		check(sampleBar > 300 && plainBar == 0, "보스바 예시가 편집 화면에서만 보여야 합니다: 편집 화면 " + sampleBar + "픽셀, 평소 " + plainBar + "픽셀");
+
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+			}
+		});
 	}
 
 	private static void testFullbright(ClientGameTestContext context, TestInput input, TestServerContext server) {

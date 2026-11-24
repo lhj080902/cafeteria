@@ -122,5 +122,8 @@
 	"cafeteria.module.scoreboard": "Scoreboard",
 	"cafeteria.module.scoreboard.desc": "Move and resize the sidebar",
 	"cafeteria.hud.sample.scoreboard": "Scoreboard",
-	"cafeteria.hud.sample.scoreboard_line": "Line %s"
+	"cafeteria.hud.sample.scoreboard_line": "Line %s",
+	"cafeteria.module.bossbar": "Boss Bar",
+	"cafeteria.module.bossbar.desc": "Move and resize boss bars",
+	"cafeteria.hud.sample.bossbar": "Boss Bar"
 }

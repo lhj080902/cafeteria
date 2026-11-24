@@ -3,6 +3,7 @@
 	"package": "io.github.lhj080902.cafeteria.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+		"BossHealthOverlayMixin",
 		"CameraMixin",
 		"ChatComponentMixin",
 		"EntityRenderDispatcherMixin",
