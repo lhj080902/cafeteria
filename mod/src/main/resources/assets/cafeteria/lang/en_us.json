@@ -114,5 +114,9 @@
 	"cafeteria.screenshot.not_found": "That screenshot file was not found",
 	"cafeteria.setting.potion_icons": "Effect icons",
 	"cafeteria.setting.potion_hide_vanilla": "Hide vanilla icons",
-	"cafeteria.setting.zoom_hand_hidden": "Hide hand while zooming"
+	"cafeteria.setting.zoom_hand_hidden": "Hide hand while zooming",
+	"cafeteria.module.title": "Title",
+	"cafeteria.module.title.desc": "Move and resize titles",
+	"cafeteria.hud.sample.title": "Title",
+	"cafeteria.hud.sample.subtitle": "Subtitle"
 }

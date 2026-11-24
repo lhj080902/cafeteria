@@ -245,12 +245,16 @@ public class HudEditScreen extends Screen {
 		graphics.drawString(font, info, infoX + 3, infoY + 2, CafeteriaScreen.ACCENT, false);
 	}
 
+	/** 켜져 있는 요소들. 아래에 그려지는 것부터. */
 	private List<HudElement> enabledElements() {
 		List<HudElement> elements = new ArrayList<>();
 
-		for (HudElement element : Modules.HUD) {
-			if (element.isEnabled()) {
-				elements.add(element);
+		// 넓은 바닐라 요소(타이틀, 채팅 등)를 먼저 넣어 아래에 깐다. 그 위에 놓인 작은 요소가 가려지거나 클릭을 빼앗기지 않는다.
+		for (boolean underlay : new boolean[] {true, false}) {
+			for (HudElement element : Modules.HUD) {
+				if (element.isEnabled() && element.underlay() == underlay) {
+					elements.add(element);
+				}
 			}
 		}
 

@@ -114,5 +114,9 @@
 	"cafeteria.screenshot.not_found": "그 스크린샷 파일을 찾을 수 없습니다",
 	"cafeteria.setting.potion_icons": "효과 아이콘",
 	"cafeteria.setting.potion_hide_vanilla": "기본 아이콘 숨김",
-	"cafeteria.setting.zoom_hand_hidden": "줌 중 손 숨기기"
+	"cafeteria.setting.zoom_hand_hidden": "줌 중 손 숨기기",
+	"cafeteria.module.title": "타이틀",
+	"cafeteria.module.title.desc": "화면 가운데 큰 글씨의 위치·크기",
+	"cafeteria.hud.sample.title": "타이틀",
+	"cafeteria.hud.sample.subtitle": "부제목"
 }

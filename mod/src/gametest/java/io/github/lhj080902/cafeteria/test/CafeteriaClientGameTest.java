@@ -89,6 +89,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testHudEditor(context, input);
 			testHudResizeHandles(context);
 			testHudBoxSelection(context, input);
+			testTitlePlacement(context, server);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
 			testConfig(context);
@@ -1336,6 +1337,164 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
 			}
 		});
+	}
+
+	/**
+	 * 스크린샷에서 표시 색(밝은 청록, 채팅 색 이름으로 aqua)인 픽셀의 개수와 영역(왼쪽, 위, 오른쪽, 아래)을 GUI 좌표로 돌려준다.
+	 * 바닐라가 그리는 타이틀·스코어보드·보스바·채팅이 실제로 어디에 얼마나 크게 그려졌는지 재는 데 쓴다.
+	 */
+	private static double[] markerBounds(ClientGameTestContext context, String name) {
+		BufferedImage image = readImage(context.takeScreenshot(name));
+		double scale = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScale());
+		int count = 0;
+		int left = Integer.MAX_VALUE;
+		int top = Integer.MAX_VALUE;
+		int right = -1;
+		int bottom = -1;
+
+		for (int y = 0; y < image.getHeight(); y++) {
+			for (int x = 0; x < image.getWidth(); x++) {
+				int rgb = image.getRGB(x, y);
+
+				if ((rgb >> 16 & 0xFF) < 130 && (rgb >> 8 & 0xFF) > 200 && (rgb & 0xFF) > 200) {
+					count++;
+					left = Math.min(left, x);
+					top = Math.min(top, y);
+					right = Math.max(right, x);
+					bottom = Math.max(bottom, y);
+				}
+			}
+		}
+
+		if (count == 0) {
+			return new double[] {0, 0, 0, 0, 0};
+		}
+
+		return new double[] {count, left / scale, top / scale, (right + 1) / scale, (bottom + 1) / scale};
+	}
+
+	/** 요소가 차지하는 상자 (x, y, 너비, 높이). */
+	private static int[] elementBox(ClientGameTestContext context, HudElement element) {
+		return context.computeOnClient(minecraft -> {
+			int width = minecraft.getWindow().getGuiScaledWidth();
+			int height = minecraft.getWindow().getGuiScaledHeight();
+			return new int[] {element.x(minecraft, width), element.y(minecraft, height), element.width(minecraft), element.height(minecraft)};
+		});
+	}
+
+	/** 잰 영역이 요소의 상자 안에 있는지 (1픽셀까지는 반올림 차이로 본다). */
+	private static boolean inside(double[] bounds, int[] box) {
+		return bounds[0] > 0 && bounds[1] >= box[0] - 1 && bounds[2] >= box[1] - 1 && bounds[3] <= box[0] + box[2] + 1 && bounds[4] <= box[1] + box[3] + 1;
+	}
+
+	private static String describe(double[] bounds) {
+		return java.util.Arrays.toString(bounds);
+	}
+
+	/** 스크린샷의 상자 안에서 흰색에 가까운 픽셀 수. 편집 화면의 예시 글자(흰색)가 그려졌는지 볼 때 쓴다. */
+	private static int whitePixels(ClientGameTestContext context, BufferedImage image, int[] box) {
+		int scale = context.computeOnClient(minecraft -> (int) minecraft.getWindow().getGuiScale());
+		int count = 0;
+
+		for (int y = Math.max(0, box[1] * scale); y < Math.min(image.getHeight(), (box[1] + box[3]) * scale); y++) {
+			for (int x = Math.max(0, box[0] * scale); x < Math.min(image.getWidth(), (box[0] + box[2]) * scale); x++) {
+				int rgb = image.getRGB(x, y);
+
+				if ((rgb >> 16 & 0xFF) > 235 && (rgb >> 8 & 0xFF) > 235 && (rgb & 0xFF) > 235) {
+					count++;
+				}
+			}
+		}
+
+		return count;
+	}
+
+	/**
+	 * 타이틀: 기본 상태(옮기지 않음, 100%)에서는 바닐라와 똑같이 그려지고, 옮기거나 크기를 바꾸면 그 자리·크기로 그려진다.
+	 * 타이틀이 떠 있지 않을 때 편집 화면에는 예시가 보인다.
+	 */
+	private static void testTitlePlacement(ClientGameTestContext context, TestServerContext server) {
+		check(Modules.TITLE.isEnabled(), "타이틀 요소는 기본으로 켜져 있어야 합니다");
+		check(!Modules.TITLE.isMoved() && exactly(Modules.TITLE.scale.get(), 1.0), "타이틀 요소가 기본 상태가 아닙니다");
+		int width = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth());
+		int height = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledHeight());
+		double[] none = markerBounds(context, "title-none");
+		check(none[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다: " + describe(none));
+
+		server.runCommand("title @a times 0 6000 0");
+		server.runCommand("title @a title {\"text\":\"██\",\"color\":\"aqua\"}");
+		context.waitTicks(10);
+
+		// 1) 기본 상태는 요소를 끈 것(바닐라 그대로)과 픽셀까지 같다.
+		context.runOnClient(minecraft -> Modules.TITLE.setEnabled(false));
+		context.waitTicks(3);
+		double[] vanilla = markerBounds(context, "title-vanilla");
+		check(vanilla[0] > 200, "타이틀이 화면에 보이지 않습니다: " + describe(vanilla));
+		context.runOnClient(minecraft -> Modules.TITLE.setEnabled(true));
+		context.waitTicks(3);
+		double[] normal = markerBounds(context, "title-default");
+		check(java.util.Arrays.equals(normal, vanilla), "기본 상태의 타이틀이 바닐라와 다르게 그려졌습니다: " + describe(vanilla) + " → " + describe(normal));
+		check(Math.abs((normal[1] + normal[3]) / 2 - width / 2.0) <= 5, "타이틀이 화면 가운데에 있지 않습니다: " + describe(normal));
+		check(context.computeOnClient(Modules.TITLE::isLive), "화면에 뜬 타이틀을 요소가 알지 못합니다");
+		int[] normalBox = elementBox(context, Modules.TITLE);
+		check(inside(normal, normalBox), "타이틀이 요소 상자 밖에 그려졌습니다: " + describe(normal) + " / 상자 " + java.util.Arrays.toString(normalBox));
+
+		// 2) 옮기지 않고 크기만 키우면 화면 가운데 정렬이 유지된다.
+		context.runOnClient(minecraft -> Modules.TITLE.rescale(minecraft, 1.5, width, height));
+		context.waitTicks(3);
+		double[] grown = markerBounds(context, "title-grown");
+		check(!Modules.TITLE.isMoved(), "크기만 바꿨는데 옮긴 것으로 처리됐습니다");
+		check(Math.abs((grown[3] - grown[1]) - (normal[3] - normal[1]) * 1.5) <= 3, "타이틀이 1.5배가 되지 않았습니다: " + describe(normal) + " → " + describe(grown));
+		check(Math.abs((grown[1] + grown[3]) / 2 - width / 2.0) <= 6, "크기를 키운 타이틀이 가운데에서 벗어났습니다: " + describe(grown));
+		check(inside(grown, elementBox(context, Modules.TITLE)), "키운 타이틀이 요소 상자 밖에 그려졌습니다: " + describe(grown));
+
+		// 3) 왼쪽 위로 옮기고 절반 크기로 줄이면 그 자리에 그 크기로 그려진다.
+		context.runOnClient(minecraft -> {
+			Modules.TITLE.scale.set(0.5);
+			Modules.TITLE.setPosition(minecraft, 10, 10, width, height);
+		});
+		context.waitTicks(3);
+		double[] placed = markerBounds(context, "title-moved-half");
+		int[] placedBox = elementBox(context, Modules.TITLE);
+		check(Modules.TITLE.isMoved(), "옮겼는데 옮긴 것으로 기록되지 않았습니다");
+		check(placedBox[0] == 10 && placedBox[1] == 10, "타이틀 요소가 옮긴 자리에 있지 않습니다: " + java.util.Arrays.toString(placedBox));
+		check(inside(placed, placedBox), "옮긴 타이틀이 요소 상자 밖에 그려졌습니다: " + describe(placed) + " / 상자 " + java.util.Arrays.toString(placedBox));
+		check(placed[1] - 10 <= 4, "옮긴 타이틀이 상자의 왼쪽에 붙어 있지 않습니다: " + describe(placed));
+		check(Math.abs((placed[3] - placed[1]) - (normal[3] - normal[1]) / 2) <= 2, "타이틀이 절반 크기가 아닙니다: " + describe(normal) + " → " + describe(placed));
+
+		// 4) 창이 작아져도(다른 화면 크기) 옮긴 타이틀은 화면 안에 있다.
+		int[] small = context.computeOnClient(minecraft -> new int[] {Modules.TITLE.x(minecraft, 200), Modules.TITLE.y(minecraft, 120), Modules.TITLE.width(minecraft), Modules.TITLE.height(minecraft)});
+		check(small[0] >= 0 && small[1] >= 0 && small[0] <= Math.max(0, 200 - small[2]) && small[1] <= Math.max(0, 120 - small[3]),
+			"작은 화면에서 타이틀이 화면 밖으로 나갑니다: " + java.util.Arrays.toString(small));
+
+		// 5) 위치 초기화와 100%로 되돌리면 다시 바닐라와 같다.
+		context.runOnClient(minecraft -> {
+			Modules.TITLE.resetPosition();
+			Modules.TITLE.scale.reset();
+		});
+		context.waitTicks(3);
+		double[] restored = markerBounds(context, "title-restored");
+		check(!Modules.TITLE.isMoved(), "위치를 초기화했는데 옮긴 상태가 남았습니다");
+		check(java.util.Arrays.equals(restored, vanilla), "되돌린 타이틀이 바닐라와 다릅니다: " + describe(vanilla) + " → " + describe(restored));
+
+		// 6) 타이틀이 없을 때: 편집 화면에서만 예시가 보인다.
+		server.runCommand("title @a clear");
+		server.runCommand("title @a reset");
+		context.waitTicks(5);
+		check(markerBounds(context, "title-cleared")[0] == 0, "타이틀을 지웠는데 화면에 남아 있습니다");
+		context.setScreen(() -> new HudEditScreen(null));
+		context.waitTicks(3);
+		check(!context.computeOnClient(Modules.TITLE::isLive), "타이틀이 없는데 떠 있다고 판단했습니다");
+		int[] sampleBox = elementBox(context, Modules.TITLE);
+		check(sampleBox[2] > 20 && sampleBox[3] >= 36, "편집 화면의 타이틀 예시 크기가 이상합니다: " + java.util.Arrays.toString(sampleBox));
+		BufferedImage editing = readImage(context.takeScreenshot("hud-edit-title-sample"));
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		context.waitTicks(3);
+		BufferedImage plain = readImage(context.takeScreenshot("title-no-sample"));
+		int sampleWhite = whitePixels(context, editing, sampleBox);
+		int plainWhite = whitePixels(context, plain, sampleBox);
+		check(sampleWhite > plainWhite + 200, "편집 화면에 타이틀 예시가 보이지 않습니다: " + plainWhite + " → " + sampleWhite + "픽셀");
 	}
 
 	private static void testFullbright(ClientGameTestContext context, TestInput input, TestServerContext server) {

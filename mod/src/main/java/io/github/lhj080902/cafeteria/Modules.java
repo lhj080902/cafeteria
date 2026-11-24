@@ -10,6 +10,7 @@ import io.github.lhj080902.cafeteria.hud.KeystrokesHud;
 import io.github.lhj080902.cafeteria.hud.PingHud;
 import io.github.lhj080902.cafeteria.hud.PotionHud;
 import io.github.lhj080902.cafeteria.hud.ReachHud;
+import io.github.lhj080902.cafeteria.hud.TitleHud;
 import io.github.lhj080902.cafeteria.module.ChatTimeModule;
 import io.github.lhj080902.cafeteria.module.FreelookModule;
 import io.github.lhj080902.cafeteria.module.FullbrightModule;
@@ -57,11 +58,13 @@ public final class Modules {
 	public static final KeystrokesHud KEYSTROKES = new KeystrokesHud(RIGHT, 0.93);
 	public static final ComboHud COMBO = new ComboHud(0.5, 0.62);
 	public static final ReachHud REACH = new ReachHud(0.5, 0.68);
+	/** 바닐라가 그리는 HUD. 기본 자리는 바닐라가 정하고, 옮기거나 크기를 바꿨을 때만 손을 댄다. */
+	public static final TitleHud TITLE = new TitleHud();
 
 	/** 설정 화면의 "기능" 묶음. */
 	public static final List<Module> FEATURES = List.of(FREELOOK, ZOOM, HITBOX, FULLBRIGHT, LOW_FIRE, NO_TUTORIAL, MENU_BACKGROUND, CHAT_TIME, INFINITE_CHAT, SCREENSHOT);
 	/** 설정 화면의 "HUD" 묶음이자 화면에 그리는 순서. */
-	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH);
+	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH, TITLE);
 	public static final List<Module> ALL;
 
 	static {

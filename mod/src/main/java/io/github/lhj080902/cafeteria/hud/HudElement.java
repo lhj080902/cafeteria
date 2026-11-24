@@ -62,6 +62,11 @@ public abstract class HudElement extends Module {
 		return contentHeight(minecraft);
 	}
 
+	/** 편집 화면에서 다른 요소 아래에 깔리는지. 화면을 넓게 차지하는 바닐라 요소(타이틀, 채팅 등)는 true. */
+	public boolean underlay() {
+		return false;
+	}
+
 	/** 편집 화면에서 옮길 수 있는지. 채팅처럼 자리가 정해진 요소는 false. */
 	public boolean movable() {
 		return true;
