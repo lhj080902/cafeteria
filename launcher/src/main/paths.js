@@ -49,4 +49,16 @@ function defaultGameDir({ platform = process.platform, env = process.env, home =
   return p.join(home, '.cafeteria');
 }
 
-module.exports = { minecraftDir, defaultGameDir };
+/**
+ * 런처가 직접 받는 Java, 라이브러리, 에셋이 들어가는 폴더.
+ * 기본 위치는 게임 폴더와 같지만, 게임 폴더 설정(CAFETERIA_GAME_DIR)을 바꿔도 따라가지 않는다.
+ */
+function dataDir({ platform = process.platform, env = process.env, home = os.homedir() } = {}) {
+  if (env.CAFETERIA_DATA_DIR) {
+    return env.CAFETERIA_DATA_DIR;
+  }
+
+  return defaultGameDir({ platform, env: { ...env, CAFETERIA_GAME_DIR: '' }, home });
+}
+
+module.exports = { minecraftDir, defaultGameDir, dataDir };

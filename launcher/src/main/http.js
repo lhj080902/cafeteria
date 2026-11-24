@@ -61,6 +61,49 @@ async function readJson(url, { headers, method, body }) {
 }
 
 /**
+ * 요청을 보내고 상태 코드와 JSON 본문을 돌려준다. 2xx 가 아니어도 던지지 않으며, 본문이 JSON 이 아니면 body 는 null 이다.
+ * 로그인 서버처럼 실패 응답의 본문(오류 코드)을 읽어야 하는 곳에서 쓴다.
+ *
+ * @param {string} url
+ * @param {{method?: string, headers?: object, json?: any, form?: Record<string, string>}} [options]
+ * @returns {Promise<{status: number, body: any | null}>}
+ */
+async function sendJson(url, { method = 'GET', headers = {}, json, form } = {}) {
+  const sendHeaders = { Accept: 'application/json', ...headers };
+  let body;
+
+  if (form) {
+    body = new URLSearchParams(form).toString();
+    sendHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
+  } else if (json !== undefined) {
+    body = JSON.stringify(json);
+    sendHeaders['Content-Type'] = 'application/json';
+  }
+
+  let response;
+
+  try {
+    response = await fetchImpl(url, {
+      method,
+      body,
+      headers: { 'User-Agent': USER_AGENT, ...sendHeaders },
+      signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new LauncherError('NETWORK', '서버에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.', {
+      url: String(url),
+      cause: error.message,
+    });
+  }
+
+  try {
+    return { status: response.status, body: await response.json() };
+  } catch {
+    return { status: response.status, body: null };
+  }
+}
+
+/**
  * 파일을 내려받는다. 임시 파일(.part)에 받으면서 해시를 계산하고, 검증이 끝난 뒤에만 최종 이름으로 바꾼다.
  *
  * @param {string} url
@@ -139,4 +182,4 @@ async function download(url, destination, { allowedHosts, hashes = {}, onProgres
   }
 }
 
-module.exports = { setFetch, getJson, postJson, download };
+module.exports = { setFetch, getJson, postJson, sendJson, download };

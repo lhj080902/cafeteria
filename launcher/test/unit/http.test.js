@@ -96,3 +96,28 @@ test('postJson 은 JSON 본문을 POST 로 보낸다', async () => {
   assert.equal(fetch.calls[0].headers['Content-Type'], 'application/json');
   assert.equal(fetch.calls[0].headers['User-Agent'], 'CafeteriaLauncher/1.2.2');
 });
+
+test('sendJson 은 2xx 가 아니어도 상태 코드와 본문을 돌려준다', async () => {
+  const fetch = fakeFetch({
+    'https://auth.example.com/token': { status: 400, json: { error: 'invalid_grant' } },
+    'https://auth.example.com/text': { status: 502, body: 'Bad Gateway' },
+  });
+  http.setFetch(fetch);
+
+  assert.deepEqual(await http.sendJson('https://auth.example.com/token', { method: 'POST', form: { a: '1', b: 'x y' } }), { status: 400, body: { error: 'invalid_grant' } });
+  assert.equal(fetch.calls[0].method, 'POST');
+  assert.equal(fetch.calls[0].body, 'a=1&b=x+y');
+  assert.equal(fetch.calls[0].headers['Content-Type'], 'application/x-www-form-urlencoded');
+  assert.equal(fetch.calls[0].headers.Accept, 'application/json');
+
+  assert.deepEqual(await http.sendJson('https://auth.example.com/text', { method: 'POST', json: { k: 1 } }), { status: 502, body: null });
+  assert.equal(fetch.calls[1].body, '{"k":1}');
+  assert.equal(fetch.calls[1].headers['Content-Type'], 'application/json');
+});
+
+test('sendJson 은 연결에 실패하면 NETWORK 오류를 낸다', async () => {
+  http.setFetch(async () => {
+    throw new Error('offline');
+  });
+  await assert.rejects(http.sendJson('https://auth.example.com/token'), { code: 'NETWORK' });
+});

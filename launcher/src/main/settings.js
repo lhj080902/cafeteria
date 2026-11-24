@@ -27,6 +27,8 @@ const DEFAULTS = Object.freeze({
   launcherPath: '',
   /** 게임 폴더. 비어 있으면 기본 위치(.cafeteria)를 쓴다. */
   gameDir: '',
+  /** 게임을 여는 방식. 'direct' 는 런처가 직접 실행하고, 'official' 은 공식 런처에 맡긴다. */
+  launchMode: 'direct',
   /** CurseForge API 키. { encrypted: base64 } 또는 { plain: string } 형태로 저장한다. */
   curseforgeKey: null,
 });
@@ -167,6 +169,10 @@ function sanitize(input) {
   if (typeof input.jvmArgs === 'string') {
     // 프로필 파일에 한 줄로 들어가는 값이라 줄바꿈과 탭은 공백으로 바꾼다.
     result.jvmArgs = input.jvmArgs.replace(/\s+/g, ' ').trim().slice(0, MAX_JVM_ARGS_LENGTH);
+  }
+
+  if (input.launchMode === 'direct' || input.launchMode === 'official') {
+    result.launchMode = input.launchMode;
   }
 
   for (const name of ['launcherPath', 'gameDir', 'javaPath']) {

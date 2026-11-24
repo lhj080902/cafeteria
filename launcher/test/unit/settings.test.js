@@ -28,6 +28,7 @@ test('처음에는 기본값을 쓴다', async (t) => {
     modUpdateCheck: true,
     launcherPath: '',
     gameDir: '',
+    launchMode: 'direct',
     hasCurseforgeKey: false,
   });
   assert.deepEqual(store.profileOptions(), { memoryGb: 4, jvmArgs: '', javaPath: '', resolution: null });
@@ -149,4 +150,12 @@ test('자동 업데이트는 기본으로 켜져 있고 끌 수 있다', async (
   assert.equal((await new SettingsStore(file).load()).get('autoUpdate'), false);
   await store.update({ autoUpdate: 'no' });
   assert.equal(store.get('autoUpdate'), false, '잘못된 값은 무시한다');
+});
+
+test('실행 방식은 direct 가 기본이고 direct, official 만 받는다', async (t) => {
+  const store = await new SettingsStore(path.join(tempDir(t), 'settings.json')).load();
+  assert.equal(store.get('launchMode'), 'direct');
+  assert.equal((await store.update({ launchMode: 'official' })).launchMode, 'official');
+  assert.equal((await store.update({ launchMode: 'offline' })).launchMode, 'official');
+  assert.equal((await store.reset()).launchMode, 'direct');
 });
