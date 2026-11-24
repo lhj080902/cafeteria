@@ -77,6 +77,7 @@ async function checkStatus({ minecraftDir, gameDir, resourcesDir }) {
   return {
     officialLauncherFound: profileFiles.length > 0,
     installed: profileInstalled && modInstalled && (await exists(versionJsonPath(minecraftDir))),
+    modInstalled,
   };
 }
 
@@ -110,16 +111,12 @@ async function ensureInstalled({ minecraftDir, gameDir, resourcesDir, profile, m
   onProgress({ message: 'Fabric 로더 정보를 준비하는 중...', fraction: 0.05 });
   await installVersionJson(minecraftDir, repair);
 
-  onProgress({ message: 'Cafeteria 모드를 설치하는 중...', fraction: 0.25 });
-  await installBundledMod({ gameDir, resourcesDir });
-
-  onProgress({ message: 'Fabric API를 확인하는 중...', fraction: 0.4 });
-  await ensureFabricApi({
+  // 모드 설치의 0~1 을 이 작업의 0.25~0.85 구간으로 옮긴다.
+  await installMods({
+    gameDir,
+    resourcesDir,
     modManager,
-    onProgress: (received, total) => {
-      const ratio = total > 0 ? received / total : 0;
-      onProgress({ message: 'Fabric API를 내려받는 중...', fraction: 0.4 + ratio * 0.45 });
-    },
+    onProgress: (progress) => onProgress({ message: progress.message, fraction: 0.25 + progress.fraction * 0.6 }),
   });
 
   onProgress({ message: '공식 런처에 Cafeteria 프로필을 등록하는 중...', fraction: 0.9 });
@@ -130,6 +127,38 @@ async function ensureInstalled({ minecraftDir, gameDir, resourcesDir, profile, m
   }
 
   onProgress({ message: '준비 완료', fraction: 1 });
+}
+
+/**
+ * 게임 폴더의 mods 에 Cafeteria 모드와 Fabric API 를 넣는다. 공식 런처가 없어도 된다 (바로 실행용).
+ *
+ * @param {object} options
+ * @param {string} options.gameDir 카페테리아 게임 폴더
+ * @param {string} options.resourcesDir 런처 리소스 폴더 (mods/*.jar)
+ * @param {import('./mods').ModManager} options.modManager
+ * @param {(progress: {message: string, fraction: number}) => void} [options.onProgress] fraction 은 0~1
+ */
+async function ensureMods({ gameDir, resourcesDir, modManager, onProgress = () => {} }) {
+  await installMods({ gameDir, resourcesDir, modManager, onProgress });
+  onProgress({ message: 'Fabric API를 확인하는 중...', fraction: 1 });
+}
+
+/**
+ * ensureMods 의 본문. 끝났다는 알림(fraction 1)은 보내지 않아서,
+ * ensureInstalled 가 화면에 알리는 문구와 구간이 모드 설치를 떼어 내기 전과 같게 유지된다.
+ */
+async function installMods({ gameDir, resourcesDir, modManager, onProgress }) {
+  onProgress({ message: 'Cafeteria 모드를 설치하는 중...', fraction: 0 });
+  await installBundledMod({ gameDir, resourcesDir });
+
+  onProgress({ message: 'Fabric API를 확인하는 중...', fraction: 0.25 });
+  await ensureFabricApi({
+    modManager,
+    onProgress: (received, total) => {
+      const ratio = total > 0 ? received / total : 0;
+      onProgress({ message: 'Fabric API를 내려받는 중...', fraction: 0.25 + ratio * 0.75 });
+    },
+  });
 }
 
 async function installVersionJson(minecraftDir, overwrite) {
@@ -276,4 +305,4 @@ async function removeProfile(minecraftDir) {
   return removed;
 }
 
-module.exports = { ensureInstalled, checkStatus, writeProfile, removeProfile, javaArgs, findProfileFiles, versionJsonPath, PROFILE_FILES };
+module.exports = { ensureInstalled, ensureMods, checkStatus, writeProfile, removeProfile, javaArgs, findProfileFiles, versionJsonPath, PROFILE_FILES };

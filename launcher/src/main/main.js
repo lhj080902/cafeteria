@@ -4,16 +4,20 @@ const { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } = require
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
+const { AccountManager } = require('./account');
 const { EXTERNAL_HOSTS, LOADER_VERSION, MINECRAFT_VERSION, RELEASES_URL, USER_AGENT } = require('./constants');
 const { LauncherError } = require('./errors');
+const { quickStatus } = require('./game-files');
 const http = require('./http');
 const importer = require('./importer');
 const installer = require('./installer');
+const { openLoginWindow } = require('./login-window');
 const { installMod } = require('./mod-installer');
 const { applyModUpdate, checkModUpdates } = require('./mod-updater');
 const { ModManager, baseName } = require('./mods');
 const { isOfficialLauncherRunning, launchOfficialLauncher } = require('./official-launcher');
 const paths = require('./paths');
+const { playDirect, repairDirect } = require('./play-direct');
 const { SettingsStore } = require('./settings');
 const { UpdateManager } = require('./updater');
 const curseforge = require('./sources/curseforge');
@@ -30,14 +34,25 @@ if (process.env.CAFETERIA_USER_DATA) {
 app.userAgentFallback = USER_AGENT;
 
 const resourcesDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..', 'resources');
+/** 공식 런처 없이 바로 실행하는 것은 Windows x64 에서만 지원한다. */
+const directSupported = process.platform === 'win32' && process.arch === 'x64';
 
 /** @type {BrowserWindow | null} */
 let window = null;
 /** @type {SettingsStore} */
 let settings;
+/** @type {AccountManager} */
+let account;
 /** @type {UpdateManager} */
 let updates;
 let playing = false;
+/** 로그인 창이 열려 있는 동안 true. 동시에 두 개를 띄우지 않는다. */
+let loggingIn = false;
+/**
+ * 바로 실행으로 띄운 게임 프로세스. 없으면 null.
+ * @type {import('node:child_process').ChildProcess | null}
+ */
+let game = null;
 let identifyingMods = false;
 /**
  * 마지막으로 확인한 모드 업데이트. 화면에는 이름과 버전만 넘기고, 실제로 받을 주소는 여기 보관한 것만 쓴다.
@@ -63,6 +78,23 @@ function send(channel, payload) {
 
 function sendProgress(scope, progress) {
   send('progress', { scope, ...progress });
+}
+
+/** 지금 쓸 실행 방식. 바로 실행을 지원하지 않는 환경에서는 설정과 상관없이 공식 런처를 쓴다. */
+function launchMode() {
+  return directSupported && settings.get('launchMode') === 'direct' ? 'direct' : 'official';
+}
+
+/** 바로 실행한 게임 프로세스를 지켜보고, 시작과 종료를 화면에 알린다. */
+function trackGame(child) {
+  game = child;
+  send('game', { running: true, exitCode: null });
+  child.once('exit', (code) => {
+    if (game === child) {
+      game = null;
+      send('game', { running: false, exitCode: code });
+    }
+  });
 }
 
 /**
@@ -229,6 +261,12 @@ function handle(channel, handler) {
 async function currentState() {
   const minecraftDir = paths.minecraftDir();
   const status = await installer.checkStatus({ minecraftDir, gameDir: gameDir(), resourcesDir });
+  const mode = launchMode();
+
+  // 바로 실행은 공식 런처 프로필이 필요 없다. Cafeteria 모드와 게임 파일이 있으면 설치된 것으로 본다.
+  if (mode === 'direct') {
+    status.installed = status.modInstalled && (await quickStatus(paths.dataDir()));
+  }
 
   return {
     appVersion: app.getVersion(),
@@ -241,6 +279,9 @@ async function currentState() {
     settings: settings.publicView(),
     update: updates.state,
     releasesUrl: RELEASES_URL,
+    account: account.publicView(),
+    game: { running: Boolean(game) },
+    launch: { mode, directSupported },
   };
 }
 
@@ -271,8 +312,40 @@ function install(scope, repair) {
   });
 }
 
+/** 바로 실행에 쓰는 값. 플레이와 설치 복구가 같이 쓴다. */
+function directOptions(scope) {
+  return {
+    gameDir: gameDir(),
+    dataDir: paths.dataDir(),
+    seedDir: paths.minecraftDir(),
+    resourcesDir,
+    modManager: modManager(),
+    onProgress: (progress) => sendProgress(scope, progress),
+  };
+}
+
 function play() {
   return exclusive(async () => {
+    if (launchMode() === 'direct') {
+      if (game) {
+        throw new LauncherError('ALREADY_RUNNING', '게임이 이미 실행 중입니다.');
+      }
+
+      const child = await playDirect({ ...directOptions('play'), account, launcherVersion: app.getVersion(), options: settings.profileOptions() });
+      trackGame(child);
+
+      if (settings.get('closeOnLaunch')) {
+        // 게임이 곧바로 꺼지면(설정 오류 등) 런처를 남겨서 알 수 있게 한다.
+        setTimeout(() => {
+          if (game === child) {
+            app.quit();
+          }
+        }, 8000);
+      }
+
+      return { launched: true, mode: 'direct' };
+    }
+
     // 공식 런처가 떠 있는 동안에는 프로필 파일을 바꿔도 반영되지 않을 수 있어서 미리 확인해 둔다.
     const wasRunning = await isOfficialLauncherRunning();
     await install('play', false);
@@ -282,7 +355,7 @@ function play() {
       setTimeout(() => app.quit(), 1500);
     }
 
-    return { launched: result.launched, wasRunning };
+    return { launched: result.launched, wasRunning, mode: 'official' };
   });
 }
 
@@ -314,7 +387,7 @@ function registerHandlers() {
   handle('state:get', currentState);
   handle('game:play', play);
 
-  handle('game:repair', () => exclusive(() => install('repair', true)));
+  handle('game:repair', () => exclusive(() => (launchMode() === 'direct' ? repairDirect(directOptions('repair')) : install('repair', true))));
   handle('game:removeProfile', () => exclusive(() => installer.removeProfile(paths.minecraftDir())));
 
   handle('game:openFolder', async () => {
@@ -437,6 +510,24 @@ function registerHandlers() {
     importer.importItems({ sourceDirectory, itemIds, gameDir: gameDir(), overwrite: Boolean(overwrite) }),
   );
 
+  handle('account:login', async () => {
+    if (loggingIn) {
+      throw new LauncherError('BUSY', '이미 로그인 창이 열려 있습니다.');
+    }
+
+    loggingIn = true;
+    let code;
+
+    try {
+      code = await openLoginWindow({ parent: window });
+    } finally {
+      loggingIn = false;
+    }
+
+    return account.completeLogin(code);
+  });
+  handle('account:logout', () => account.logout());
+
   handle('update:check', () => updates.check(true));
   handle('update:install', () => updates.install());
 
@@ -516,11 +607,14 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     // 시스템 프록시 설정을 따르는 Chromium 네트워크 스택으로 요청한다.
     http.setFetch((url, options) => net.fetch(url, options));
-    settings = await new SettingsStore(path.join(app.getPath('userData'), 'settings.json'), {
+    // 설정(CurseForge 키)과 계정(refresh 토큰)이 같은 OS 보안 저장소를 쓴다.
+    const vault = {
       isAvailable: () => safeStorage.isEncryptionAvailable(),
       encrypt: (text) => safeStorage.encryptString(text),
       decrypt: (data) => safeStorage.decryptString(data),
-    }).load();
+    };
+    settings = await new SettingsStore(path.join(app.getPath('userData'), 'settings.json'), vault).load();
+    account = await new AccountManager({ file: path.join(app.getPath('userData'), 'account.json'), vault }).load();
     updates = createUpdateManager();
     registerHandlers();
     createWindow();

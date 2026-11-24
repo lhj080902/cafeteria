@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld('cafeteria', {
   openGameFolder: () => invoke('game:openFolder'),
   openLogsFolder: () => invoke('game:openLogs'),
 
+  /** Microsoft 로그인 창을 띄우고, 끝나면 계정 정보({ loggedIn, name })를 돌려준다. */
+  login: () => invoke('account:login'),
+  /** 저장된 Microsoft 계정을 지운다. */
+  logout: () => invoke('account:logout'),
+
   listMods: () => invoke('mods:list'),
   addModFiles: () => invoke('mods:addDialog'),
   /** 끌어다 놓은 파일(File 객체 배열)을 mods 폴더에 추가한다. */
@@ -62,4 +67,6 @@ contextBridge.exposeInMainWorld('cafeteria', {
   onModsUpdated: (callback) => subscribe('mods-updated', callback),
   /** 모드 업데이트 목록이 바뀔 때마다 받는다. */
   onModUpdates: (callback) => subscribe('mod-updates', callback),
+  /** 바로 실행한 게임이 시작하거나 끝날 때 받는다 ({ running, exitCode }). */
+  onGameState: (callback) => subscribe('game', callback),
 });

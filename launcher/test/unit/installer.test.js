@@ -49,7 +49,7 @@ function readProfiles(minecraftDir, name = 'launcher_profiles.json') {
 
 test('처음 설치: Fabric 버전 정보, 모드, 프로필이 모두 준비된다', async (t) => {
   const { minecraftDir, gameDir, resourcesDir, options } = setup(t);
-  assert.deepEqual(await installer.checkStatus({ minecraftDir, gameDir, resourcesDir }), { officialLauncherFound: true, installed: false });
+  assert.deepEqual(await installer.checkStatus({ minecraftDir, gameDir, resourcesDir }), { officialLauncherFound: true, installed: false, modInstalled: false });
 
   const messages = [];
   await installer.ensureInstalled({ ...options, onProgress: (progress) => messages.push(progress) });
@@ -73,9 +73,20 @@ test('처음 설치: Fabric 버전 정보, 모드, 프로필이 모두 준비된
   assert.deepEqual(json.settings, { keepLauncherOpen: true });
   assert.equal(json.version, 3);
 
-  assert.deepEqual(await installer.checkStatus({ minecraftDir, gameDir, resourcesDir }), { officialLauncherFound: true, installed: true });
+  assert.deepEqual(await installer.checkStatus({ minecraftDir, gameDir, resourcesDir }), { officialLauncherFound: true, installed: true, modInstalled: true });
   assert.equal(messages.at(-1).fraction, 1);
   assert.ok(messages.every((progress, index) => index === 0 || progress.fraction >= messages[index - 1].fraction), '진행률은 줄어들지 않는다');
+  // 모드 설치를 ensureMods 로 떼어 낸 뒤에도 화면에 알리는 문구와 구간은 그대로여야 한다
+  assert.deepEqual(
+    messages.map(({ message, fraction }) => [message, fraction]),
+    [
+      ['Fabric 로더 정보를 준비하는 중...', 0.05],
+      ['Cafeteria 모드를 설치하는 중...', 0.25],
+      ['Fabric API를 확인하는 중...', 0.4],
+      ['공식 런처에 Cafeteria 프로필을 등록하는 중...', 0.9],
+      ['준비 완료', 1],
+    ],
+  );
 });
 
 test('다시 실행해도 안전하다: 만든 날짜는 유지하고 바뀐 설정만 반영한다', async (t) => {
@@ -211,4 +222,31 @@ test('Fabric API 가 꺼져 있거나 없으면 검증된 버전을 실제 서�
   const versionJson = JSON.parse(fs.readFileSync(installer.versionJsonPath(options.minecraftDir), 'utf8'));
   assert.equal(versionJson.id, VERSION_ID);
   assert.ok(versionJson.libraries.length > 0);
+});
+
+// Fabric API 는 고정된 해시로 검증하므로 가짜 응답으로는 받을 수 없다. 위 테스트처럼 실제 서버에서 받는다.
+test('ensureMods 는 공식 런처가 없어도 Cafeteria 모드와 Fabric API 를 설치한다', live, async (t) => {
+  const root = tempDir(t);
+  // .minecraft 폴더와 launcher_profiles.json 은 만들지 않는다.
+  const minecraftDir = path.join(root, '.minecraft');
+  const gameDir = path.join(root, '.cafeteria');
+  const resourcesDir = path.join(root, 'resources');
+  const bundledModFileName = 'cafeteria-client-1.0.0+1.21.4.jar';
+  makeJar(path.join(resourcesDir, 'mods', bundledModFileName), { id: 'cafeteria', name: 'Cafeteria Client', version: '1.0.0' });
+  const modManager = new ModManager(gameDir);
+  assert.equal((await installer.checkStatus({ minecraftDir, gameDir, resourcesDir })).modInstalled, false);
+
+  const fractions = [];
+  await installer.ensureMods({ gameDir, resourcesDir, modManager, onProgress: (progress) => fractions.push(progress.fraction) });
+
+  assert.deepEqual(fs.readdirSync(path.join(gameDir, 'mods')).sort(), [bundledModFileName, FABRIC_API.fileName].sort());
+  assert.equal(fs.statSync(path.join(gameDir, 'mods', FABRIC_API.fileName)).size, 2149128);
+  assert.ok((await modManager.list()).some((mod) => mod.modId === 'fabric-api' && mod.enabled && mod.builtin));
+  assert.equal(fractions[fractions.length - 1], 1);
+  assert.ok(fractions.every((fraction, index) => fraction >= 0 && fraction <= 1 && (index === 0 || fraction >= fractions[index - 1])), '진행률은 0~1 이고 줄어들지 않는다');
+  assert.equal(fs.existsSync(minecraftDir), false);
+  const status = await installer.checkStatus({ minecraftDir, gameDir, resourcesDir });
+  assert.equal(status.modInstalled, true);
+  assert.equal(status.officialLauncherFound, false);
+  assert.equal(status.installed, false);
 });
