@@ -2266,8 +2266,13 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		server.runCommand(here + "fill ~1 ~0.5 ~-27 ~1 ~2.5 ~1 minecraft:sea_lantern");
 		server.runCommand(here + "fill ~ ~0.5 ~1 ~ ~2.5 ~1 minecraft:sea_lantern");
 		server.runCommand(here + "fill ~ ~0.5 ~-27 ~ ~2.5 ~-27 minecraft:lime_concrete");
-		// 조준점이 화면 한가운데를 가리지 않게 한다.
-		context.runOnClient(minecraft -> minecraft.options.hideGui = true);
+		// 조준점과 물속·용암의 입자가 화면 한가운데를 가리지 않게 한다.
+		ParticleStatus particles = context.computeOnClient(minecraft -> {
+			ParticleStatus before = minecraft.options.particles().get();
+			minecraft.options.particles().set(ParticleStatus.MINIMAL);
+			minecraft.options.hideGui = true;
+			return before;
+		});
 		context.waitTicks(20);
 		int[] wall = centerColor(context, "fog-wall-air");
 		check(isLime(wall), "안개 검사용 벽이 화면 가운데에 보이지 않습니다: " + Arrays.toString(wall));
@@ -2338,6 +2343,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			Modules.NO_FOG.setEnabled(false);
 			Modules.NO_FOG.resetSettings();
 			minecraft.options.hideGui = false;
+			minecraft.options.particles().set(particles);
 		});
 		server.runCommand("execute as @a at @s run tp @s ~ ~-20 ~");
 		server.runCommand(here + "fill ~-1 ~19.5 ~-27 ~1 ~22.5 ~1 minecraft:air");
