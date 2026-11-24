@@ -9,6 +9,7 @@ import io.github.lhj080902.cafeteria.gui.ModuleSettingsScreen;
 import io.github.lhj080902.cafeteria.hud.ClickTracker;
 import io.github.lhj080902.cafeteria.hud.CombatTracker;
 import io.github.lhj080902.cafeteria.hud.HudElement;
+import io.github.lhj080902.cafeteria.module.NoFogModule;
 import io.github.lhj080902.cafeteria.module.ScreenshotModule;
 import io.github.lhj080902.cafeteria.util.ScreenshotClipboard;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
@@ -25,10 +26,14 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.renderer.FogParameters;
+import net.minecraft.client.renderer.FogRenderer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
+import net.minecraft.world.effect.MobEffects;
+import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 
 import javax.imageio.ImageIO;
@@ -40,6 +45,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
@@ -96,6 +102,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testChatScale(context, input);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
+			testNoFog(context, server);
 			testConfig(context);
 		}
 
@@ -1082,6 +1089,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.takeScreenshot("settings-hitbox");
 		context.setScreen(() -> new ModuleSettingsScreen(null, Modules.KEYSTROKES));
 		context.takeScreenshot("settings-keystrokes");
+		context.setScreen(() -> new ModuleSettingsScreen(null, Modules.NO_FOG));
+		context.takeScreenshot("settings-no-fog");
 
 		context.setScreen(() -> null);
 		context.waitFor(minecraft -> minecraft.screen == null);
@@ -2236,6 +2245,129 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.runOnClient(minecraft -> Modules.LOW_FIRE.setEnabled(false));
 		check(near(Modules.LOW_FIRE.offset(), 0.0), "낮은 화염을 껐는데 이동 거리가 남아 있습니다");
 		server.runCommand("execute at @a run setblock ~ ~ ~ minecraft:air");
+	}
+
+	/**
+	 * 안개 제거: 공중에 통로를 만들어 26.5칸 앞 끝에 연두색 벽을 세우고, 통로를 용암·물로 채운 채 화면 한가운데의 색을 잰다.
+	 * 끄면 벽이 안개에 묻히고, 켜면 공기 중에서 본 색 그대로여야 한다 (물속 무늬가 남아 있으면 파란색이 10 가까이 올라간다).
+	 * 통로를 바다 랜턴으로 만들어 블록 밝기가 최대로 고정되므로 공기·물·용암 속에서 벽의 밝기가 같다.
+	 */
+	private static void testNoFog(ClientGameTestContext context, TestServerContext server) {
+		check(!Modules.NO_FOG.isEnabled(), "안개 제거는 기본으로 꺼져 있어야 합니다");
+		String here = "execute at @a run ";
+		String channel = "fill ~ ~0.5 ~-26 ~ ~2.5 ~ minecraft:";
+
+		// 블록 한가운데에서 북쪽을 보고, 20칸 위에 만든 바닥으로 올라간다. 땅 위의 주민·돼지가 끼어들지 않는다.
+		server.runCommand("effect give @a minecraft:fire_resistance 120 0 true");
+		server.runCommand("execute as @a at @s align xyz run tp @s ~0.5 ~ ~0.5 180 0");
+		server.runCommand(here + "fill ~-1 ~19.5 ~-27 ~1 ~19.5 ~1 minecraft:sea_lantern");
+		server.runCommand("execute as @a at @s run tp @s ~ ~20 ~ 180 0");
+		server.runCommand(here + "fill ~-1 ~0.5 ~-27 ~-1 ~2.5 ~1 minecraft:sea_lantern");
+		server.runCommand(here + "fill ~1 ~0.5 ~-27 ~1 ~2.5 ~1 minecraft:sea_lantern");
+		server.runCommand(here + "fill ~ ~0.5 ~1 ~ ~2.5 ~1 minecraft:sea_lantern");
+		server.runCommand(here + "fill ~ ~0.5 ~-27 ~ ~2.5 ~-27 minecraft:lime_concrete");
+		// 조준점이 화면 한가운데를 가리지 않게 한다.
+		context.runOnClient(minecraft -> minecraft.options.hideGui = true);
+		context.waitTicks(20);
+		int[] wall = centerColor(context, "fog-wall-air");
+		check(isLime(wall), "안개 검사용 벽이 화면 가운데에 보이지 않습니다: " + Arrays.toString(wall));
+
+		// 1) 용암 속
+		server.runCommand(here + channel + "lava");
+		context.waitTicks(20);
+		int[] lavaFog = centerColor(context, "fog-lava-normal");
+		check(lavaFog[0] > lavaFog[1] + 60, "용암 속인데 벽이 안개에 묻히지 않았습니다: " + Arrays.toString(lavaFog));
+		context.runOnClient(minecraft -> Modules.NO_FOG.setEnabled(true));
+		context.waitTicks(3);
+		int[] lavaClear = centerColor(context, "fog-lava-clear");
+		check(sameColor(lavaClear, wall), "용암 속에서 벽이 보이지 않습니다: " + Arrays.toString(lavaClear) + " / 공기 중 " + Arrays.toString(wall));
+		context.runOnClient(minecraft -> Modules.NO_FOG.lava.set(false));
+		context.waitTicks(3);
+		int[] lavaOff = centerColor(context, "fog-lava-switch-off");
+		check(!isLime(lavaOff), "용암 스위치를 껐는데 용암 속이 맑게 보입니다: " + Arrays.toString(lavaOff));
+		context.runOnClient(minecraft -> {
+			Modules.NO_FOG.lava.reset();
+			Modules.NO_FOG.setEnabled(false);
+		});
+
+		// 2) 물속. 물속 시야는 들어간 뒤 시간이 지날수록 넓어지므로, 끈 상태는 들어가자마자 잰다.
+		server.runCommand(here + channel + "water");
+		context.waitTicks(15);
+		int[] waterFog = centerColor(context, "fog-water-normal");
+		check(waterFog[2] > waterFog[1] + 20, "물속인데 벽이 안개에 묻히지 않았습니다: " + Arrays.toString(waterFog));
+		context.runOnClient(minecraft -> Modules.NO_FOG.setEnabled(true));
+		context.waitTicks(3);
+		int[] waterClear = centerColor(context, "fog-water-clear");
+		check(isLime(waterClear), "물속에서 벽이 보이지 않습니다: " + Arrays.toString(waterClear));
+		check(sameColor(waterClear, wall), "물속 무늬가 남아 있습니다: " + Arrays.toString(waterClear) + " / 공기 중 " + Arrays.toString(wall));
+		context.runOnClient(minecraft -> Modules.NO_FOG.water.set(false));
+		context.waitTicks(3);
+		int[] waterOff = centerColor(context, "fog-water-switch-off");
+		check(!isLime(waterOff), "물속 스위치를 껐는데 물속이 맑게 보입니다: " + Arrays.toString(waterOff));
+		context.runOnClient(minecraft -> Modules.NO_FOG.water.reset());
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 안개 검사 색 - 공기 {} / 용암 {} → {} / 물 {} → {}",
+			Arrays.toString(wall), Arrays.toString(lavaFog), Arrays.toString(lavaClear), Arrays.toString(waterFog), Arrays.toString(waterClear));
+
+		// 3) 거리 안개. 바닐라가 쓰게 될 값을 직접 확인한다 (렌더 거리 192칸이면 바닐라는 172.8 ~ 192).
+		server.runCommand(here + channel + "air");
+		context.waitTicks(10);
+		FogParameters cleared = fog(context, FogRenderer.FogMode.FOG_TERRAIN);
+		check(cleared.start() >= NoFogModule.FAR_START, "거리 안개가 없어지지 않았습니다: " + cleared);
+		FogParameters sky = fog(context, FogRenderer.FogMode.FOG_SKY);
+		check(sky.end() <= 192.0F, "하늘의 안개까지 없어졌습니다: " + sky);
+		context.runOnClient(minecraft -> Modules.NO_FOG.distance.set(false));
+		FogParameters kept = fog(context, FogRenderer.FogMode.FOG_TERRAIN);
+		check(kept.end() <= 192.0F, "거리 스위치를 껐는데 안개가 없어졌습니다: " + kept);
+		context.runOnClient(minecraft -> Modules.NO_FOG.distance.reset());
+
+		// 실명 효과의 안개는 건드리지 않는다.
+		server.runCommand("effect give @a minecraft:blindness 30 0 true");
+		context.waitFor(minecraft -> minecraft.player.hasEffect(MobEffects.BLINDNESS), 200);
+		FogParameters blind = fog(context, FogRenderer.FogMode.FOG_TERRAIN);
+		check(blind.end() <= 192.0F, "실명 효과의 안개까지 없어졌습니다: " + blind);
+		server.runCommand("effect clear @a minecraft:blindness");
+		context.waitFor(minecraft -> !minecraft.player.hasEffect(MobEffects.BLINDNESS), 200);
+
+		context.runOnClient(minecraft -> {
+			Modules.NO_FOG.setEnabled(false);
+			Modules.NO_FOG.resetSettings();
+			minecraft.options.hideGui = false;
+		});
+		server.runCommand("execute as @a at @s run tp @s ~ ~-20 ~");
+		server.runCommand(here + "fill ~-1 ~19.5 ~-27 ~1 ~22.5 ~1 minecraft:air");
+		context.waitTicks(5);
+	}
+
+	/** 스크린샷을 찍어 화면 한가운데 5x5 픽셀의 평균 색(빨강, 초록, 파랑)을 돌려준다. */
+	private static int[] centerColor(ClientGameTestContext context, String name) {
+		BufferedImage image = readImage(context.takeScreenshot(name));
+		int[] sum = new int[3];
+
+		for (int y = -2; y <= 2; y++) {
+			for (int x = -2; x <= 2; x++) {
+				int rgb = image.getRGB(image.getWidth() / 2 + x, image.getHeight() / 2 + y);
+				sum[0] += rgb >> 16 & 0xFF;
+				sum[1] += rgb >> 8 & 0xFF;
+				sum[2] += rgb & 0xFF;
+			}
+		}
+
+		return new int[] {sum[0] / 25, sum[1] / 25, sum[2] / 25};
+	}
+
+	/** 안개 검사용 벽(연두색 콘크리트)의 색인지. 안개 색(주황, 파랑)이나 하늘색과는 겹치지 않는다. */
+	private static boolean isLime(int[] color) {
+		return color[1] > color[0] + 30 && color[1] > color[2] + 60;
+	}
+
+	private static boolean sameColor(int[] actual, int[] expected) {
+		return Math.abs(actual[0] - expected[0]) <= 4 && Math.abs(actual[1] - expected[1]) <= 4 && Math.abs(actual[2] - expected[2]) <= 4;
+	}
+
+	/** 지금 카메라가 있는 곳에서 바닐라가 쓰게 될 안개 값 (렌더 거리 192칸 기준). */
+	private static FogParameters fog(ClientGameTestContext context, FogRenderer.FogMode mode) {
+		return context.computeOnClient(minecraft ->
+			FogRenderer.setupFog(minecraft.gameRenderer.getMainCamera(), mode, new Vector4f(1.0F, 1.0F, 1.0F, 1.0F), 192.0F, false, 1.0F));
 	}
 
 	private static void testConfig(ClientGameTestContext context) {
