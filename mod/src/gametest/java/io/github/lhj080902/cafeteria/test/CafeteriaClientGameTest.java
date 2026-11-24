@@ -1548,6 +1548,10 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		}
 
 		// 5-1) 원래 크기로는 화면보다 넓은 타이틀도, 옮기지 않고 화면에 들어가게 줄이면 가운데에 놓인다 (왼쪽에 붙지 않는다).
+		// 타이틀의 양쪽 끝까지 재야 하므로 다른 HUD 는 잠시 끈다. HUD 는 타이틀보다 위에 그려지고,
+		// 미니맵 모드가 있으면 HUD 기본 위치가 타이틀과 같은 높이로 내려와서 타이틀의 왼쪽 끝을 가린다.
+		List<HudElement> overTitle = context.computeOnClient(minecraft -> Modules.HUD.stream().filter(element -> element.isEnabled() && element != Modules.TITLE).toList());
+		context.runOnClient(minecraft -> overTitle.forEach(element -> element.setEnabled(false)));
 		server.runCommand("title @a title {\"text\":\"███████████████\",\"color\":\"aqua\"}");
 		context.waitTicks(10);
 		int[] wideBox = elementBox(context, Modules.TITLE);
@@ -1566,7 +1570,10 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(!Modules.TITLE.isMoved() && shrunkBox[2] <= width, "이 검사는 줄인 타이틀이 화면에 들어가야 합니다: " + java.util.Arrays.toString(shrunkBox) + " / 화면 " + width);
 		check(Math.abs(shrunkBox[0] * 2 + shrunkBox[2] - width) <= 2, "화면보다 넓던 타이틀을 줄였는데 요소가 가운데에 놓이지 않았습니다: " + java.util.Arrays.toString(shrunkBox) + " / 화면 " + width);
 		check(inside(shrunk, shrunkBox) && Math.abs((shrunk[1] + shrunk[3]) / 2 - width / 2.0) <= 4, "줄인 타이틀이 가운데에 그려지지 않았습니다: " + describe(shrunk) + " / 상자 " + java.util.Arrays.toString(shrunkBox));
-		context.runOnClient(minecraft -> Modules.TITLE.scale.reset());
+		context.runOnClient(minecraft -> {
+			Modules.TITLE.scale.reset();
+			overTitle.forEach(element -> element.setEnabled(true));
+		});
 		context.waitTicks(3);
 
 		// 6) 타이틀이 없을 때: 편집 화면에서만 예시가 보인다.

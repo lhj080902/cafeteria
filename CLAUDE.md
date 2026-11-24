@@ -27,6 +27,7 @@ Minecraft **1.21.4 (Fabric)** 용 PvP 클라이언트 모드와 Windows 런처. 
 - 화면이 없는 Linux 에서는 `xvfb-run -a -s "-screen 0 1280x720x24" env LIBGL_ALWAYS_SOFTWARE=1 ./gradlew ...` 로 감싼다.
 - 다른 모드와 함께 검사: `-PextraMods=/경로/a.jar,/경로/b.jar` (`runProductionClientGameTest` 전용).
 - Gradle 이 결과를 캐시하므로 다시 돌릴 때는 `--rerun` 을 붙인다.
+- 게임 테스트가 중간에 실패하면 실행 폴더에 그때의 설정이 남아서 다음 실행이 엉뚱한 곳에서 실패할 수 있다. 다시 돌리기 전에 `mod/build/run/<실행 폴더>/config/cafeteria.json` 을 지운다.
 - 스크린샷: `mod/build/run/{clientGameTest,productionClientGameTest}/screenshots/`
 - GitHub Actions(`.github/workflows/gametest.yml`)가 `mod/` 가 바뀐 push 마다 두 게임 테스트를 돌린다. 개발 PC 에서 게임 창을 띄울 수 없을 때(사용자가 게임 중일 때)는 작업 브랜치를 push 해서 확인한다: `gh run watch <번호>`, 스크린샷과 로그는 `gh run download <번호>`.
 

@@ -1,5 +1,6 @@
 # 모드 게임 테스트: 실제 게임을 가상 화면(xvfb)에 띄워서 모듈 동작을 검사한다.
-# 개발 환경(runClientGameTest)과 배포용 jar(runProductionClientGameTest)를 따로 돌린다.
+# 개발 환경(runClientGameTest)과 배포용 jar(runProductionClientGameTest)를 따로 돌리고,
+# 배포용 jar 는 미니맵 모드(Xaero's Minimap, World Map)와 함께도 한 번 더 돌린다.
 # Linux 에서 소프트웨어 렌더링으로 돌리므로 Windows 전용 동작은 여기서 확인되지 않는다.
 name: 모드 게임 테스트
 
@@ -19,17 +20,24 @@ concurrency:
 
 jobs:
   gametest:
-    name: ${{ matrix.task }}
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - task: runClientGameTest
+          - name: clientGameTest
+            task: runClientGameTest
             run_dir: clientGameTest
-          - task: runProductionClientGameTest
+          - name: productionClientGameTest
+            task: runProductionClientGameTest
             run_dir: productionClientGameTest
+          # 미니맵이 있으면 HUD 기본 위치가 달라지고, 이 모드들도 바닐라 HUD 그리기에 끼어든다.
+          - name: productionClientGameTest-xaero
+            task: runProductionClientGameTest
+            run_dir: productionClientGameTest
+            extra_mods: true
     defaults:
       run:
         # bash 를 적어 줘야 pipefail 이 켜진다. 없으면 "gradlew | tee" 에서 gradlew 의 실패가 가려진다.
@@ -52,11 +60,25 @@ jobs:
             xvfb xauth xclip libgl1-mesa-dri libglx-mesa0 \
             libxi6 libxrandr2 libxrender1 libxtst6 libxinerama1 libxcursor1 libxxf86vm1
 
+      # 받은 파일은 고정해 둔 sha512 와 같을 때만 쓴다 (Modrinth 에 올라온 1.21.4 Fabric 용 파일).
+      - name: 함께 돌릴 모드 받기
+        if: matrix.extra_mods
+        run: |
+          mkdir -p "$RUNNER_TEMP/extra-mods"
+          cd "$RUNNER_TEMP/extra-mods"
+          curl -fsSL -O "https://cdn.modrinth.com/data/1bokaNcj/versions/XsKw9RY8/xaerominimap-fabric-1.21.4-26.5.0.jar"
+          curl -fsSL -O "https://cdn.modrinth.com/data/NcUtCpym/versions/IoGJS3fE/xaeroworldmap-fabric-1.21.4-1.46.0.jar"
+          sha512sum -c - <<'SUMS'
+          32cb9db0ef4aac6f633a5560dcc0a5ae6d0f4c17e3db3ed9cc485658c16499226e23ef99f02ffd003e18d40c7aaa080803eb476d77ba66e6f6cc82a46f999dfa  xaerominimap-fabric-1.21.4-26.5.0.jar
+          e5ac31fa366d48d02ace2489487f117dab68f59bb24bd153337a1a40e927f0f6db57cd970ac7b8776994f83239ddfa8483583a7e69dbf4e4eadab2f262716490  xaeroworldmap-fabric-1.21.4-1.46.0.jar
+          SUMS
+          echo "EXTRA_MODS=-PextraMods=$PWD/xaerominimap-fabric-1.21.4-26.5.0.jar,$PWD/xaeroworldmap-fabric-1.21.4-1.46.0.jar" >> "$GITHUB_ENV"
+
       - name: 게임 테스트
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" ./gradlew ${{ matrix.task }} --console=plain 2>&1 | tee gametest-output.log
+          xvfb-run -a -s "-screen 0 1280x720x24" ./gradlew ${{ matrix.task }} $EXTRA_MODS --console=plain 2>&1 | tee gametest-output.log
 
       # 테스트가 아예 돌지 않았는데 성공으로 끝나는 일을 막는다.
       - name: 모든 검사가 실제로 돌았는지 확인
@@ -67,7 +89,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.run_dir }}
+          name: ${{ matrix.name }}
           path: |
             mod/gametest-output.log
             mod/build/run/${{ matrix.run_dir }}/screenshots/
