@@ -748,7 +748,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		input.moveCursor(500.0, -60.0);
 		context.waitTicks(3);
 		check(near(playerYaw(context), playerYaw), "프리룩 중에 캐릭터가 회전했습니다");
-		check(near(context.computeOnClient(minecraft -> minecraft.player.getXRot()), playerPitch), "프리룩 중에 캐릭터 고개가 움직였습니다");
+		float pitchAfter = context.computeOnClient(minecraft -> minecraft.player.getXRot());
+		check(near(pitchAfter, playerPitch), "프리룩 중에 캐릭터 고개가 움직였습니다");
 		float cameraYaw = cameraYaw(context);
 		check(Math.abs(Mth.wrapDegrees(cameraYaw - playerYaw)) > 30.0F, "프리룩 중에 카메라가 돌지 않았습니다: " + cameraYaw);
 		context.takeScreenshot("freelook");
