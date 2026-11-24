@@ -73,8 +73,8 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 
 | 대상 | 결과 |
 | --- | --- |
-| 모드 게임 테스트 (개발 환경, 배포용 jar) | 통과 |
-| 모드 + Xaero's Minimap 26.5.0 + World Map 1.46.0 + FastPack 0.3.1 | 통과 |
+| 모드 게임 테스트 (개발 환경, 배포용 jar) | 1.3.0 까지 통과. 1.4.0 에서는 실행하지 못함 (아래 줄) |
+| 모드 + Xaero's Minimap 26.5.0 + World Map 1.46.0 + FastPack 0.3.1 | 1.3.0 까지 통과. 1.4.0 은 바닐라 메서드 4곳을 새로 감싸므로 다시 돌려야 한다 |
 | **모드 1.4.0 게임 테스트** (`testHudResizeHandles`, `testTitlePlacement`, `testScoreboardPlacement`, `testBossbarPlacement`, `testChatScale`, `testConfig` 추가분) | **미검증.** 컴파일만 확인했다. 게임 테스트는 게임 창을 띄우는데, 작업하는 동안 사용자가 같은 PC 에서 게임을 하고 있어서 돌리지 않았다. 이 PC 에서는 기존 게임 테스트도 아직 돌린 적이 없다 |
 | 런처 단위 테스트 106개 (Modrinth 실제 서버 포함) | 1.2.2 까지 통과 |
 | 런처 단위 테스트 170개 (Mojang·Fabric·Modrinth 실제 서버 포함, Windows) | 1.3.0 작업 브랜치에서 167 통과, 3 건너뜀, 실패 0 |

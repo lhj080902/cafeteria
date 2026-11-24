@@ -1421,6 +1421,13 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(!Modules.TITLE.isMoved() && exactly(Modules.TITLE.scale.get(), 1.0), "타이틀 요소가 기본 상태가 아닙니다");
 		int width = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth());
 		int height = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledHeight());
+		// 앞의 갑옷 HUD 검사에서 입힌 다이아몬드 투구에는 표시 색(aqua) 범위에 드는 픽셀이 있고, 갑옷 HUD 가 그 아이템을 화면에 그린다.
+		// 여기부터는 표시 색 픽셀을 재므로 갑옷을 벗긴다.
+		server.runCommand("item replace entity @a armor.head with minecraft:air");
+		server.runCommand("item replace entity @a armor.chest with minecraft:air");
+		server.runCommand("item replace entity @a armor.feet with minecraft:air");
+		context.waitTicks(5);
+		check(!context.computeOnClient(Modules.ARMOR::hasContent), "갑옷을 벗겼는데 갑옷 HUD 가 남아 있습니다");
 		double[] none = markerBounds(context, "title-none");
 		check(none[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다: " + describe(none));
 
@@ -1480,6 +1487,21 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(!Modules.TITLE.isMoved(), "위치를 초기화했는데 옮긴 상태가 남았습니다");
 		check(java.util.Arrays.equals(restored, vanilla), "되돌린 타이틀이 바닐라와 다릅니다: " + describe(vanilla) + " → " + describe(restored));
 
+		// 5-1) 원래 크기로는 화면보다 넓은 타이틀도, 옮기지 않고 화면에 들어가게 줄이면 가운데에 놓인다 (왼쪽에 붙지 않는다).
+		server.runCommand("title @a title {\"text\":\"███████████████\",\"color\":\"aqua\"}");
+		context.waitTicks(10);
+		int[] wideBox = elementBox(context, Modules.TITLE);
+		check(wideBox[2] > width, "이 검사는 타이틀이 화면보다 넓어야 합니다: " + java.util.Arrays.toString(wideBox) + " / 화면 " + width);
+		context.runOnClient(minecraft -> Modules.TITLE.rescale(minecraft, 0.7, width, height));
+		context.waitTicks(3);
+		double[] shrunk = markerBounds(context, "title-wide-shrunk");
+		int[] shrunkBox = elementBox(context, Modules.TITLE);
+		check(!Modules.TITLE.isMoved() && shrunkBox[2] <= width, "이 검사는 줄인 타이틀이 화면에 들어가야 합니다: " + java.util.Arrays.toString(shrunkBox) + " / 화면 " + width);
+		check(Math.abs(shrunkBox[0] * 2 + shrunkBox[2] - width) <= 2, "화면보다 넓던 타이틀을 줄였는데 요소가 가운데에 놓이지 않았습니다: " + java.util.Arrays.toString(shrunkBox) + " / 화면 " + width);
+		check(inside(shrunk, shrunkBox) && Math.abs((shrunk[1] + shrunk[3]) / 2 - width / 2.0) <= 4, "줄인 타이틀이 가운데에 그려지지 않았습니다: " + describe(shrunk) + " / 상자 " + java.util.Arrays.toString(shrunkBox));
+		context.runOnClient(minecraft -> Modules.TITLE.scale.reset());
+		context.waitTicks(3);
+
 		// 6) 타이틀이 없을 때: 편집 화면에서만 예시가 보인다.
 		server.runCommand("title @a clear");
 		server.runCommand("title @a reset");
@@ -1508,13 +1530,14 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(Modules.SCOREBOARD.isEnabled(), "스코어보드 요소는 기본으로 켜져 있어야 합니다");
 		int width = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth());
 		int height = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledHeight());
-		check(markerBounds(context, "scoreboard-none")[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다");
 		// 오른쪽에 겹쳐 그려지는 HUD(갑옷 등)가 섞이지 않게 이 검사 동안에는 스코어보드 요소만 켜 둔다.
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
 				element.setEnabled(element == Modules.SCOREBOARD);
 			}
 		});
+		context.waitTicks(3);
+		check(markerBounds(context, "scoreboard-none")[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다");
 		server.runCommand("scoreboard objectives add cafe dummy {\"text\":\"███\",\"color\":\"aqua\"}");
 		server.runCommand("scoreboard objectives setdisplay sidebar cafe");
 		server.runCommand("scoreboard players set Alpha cafe 3");
@@ -1638,12 +1661,13 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(Modules.BOSSBAR.isEnabled(), "보스바 요소는 기본으로 켜져 있어야 합니다");
 		int width = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth());
 		int height = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledHeight());
-		check(markerBounds(context, "bossbar-none")[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다");
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
 				element.setEnabled(element == Modules.BOSSBAR);
 			}
 		});
+		context.waitTicks(3);
+		check(markerBounds(context, "bossbar-none")[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다");
 		server.runCommand("bossbar add cafe:test {\"text\":\"███\",\"color\":\"aqua\"}");
 		server.runCommand("bossbar set cafe:test players @a");
 		context.waitTicks(10);
@@ -1907,6 +1931,38 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		});
 		input.releaseControl();
 		check(selection(context).equals(Set.of(Modules.CPS)), "채팅과 다른 요소가 함께 선택됐습니다: " + names(selection(context)));
+
+		// 채팅창 자리에 놓인 다른 요소는 채팅보다 위에 있다: 눌러서 고르고 끌 수 있고, 휠도 채팅이 아니라 그 요소에 걸린다.
+		context.runOnClient(minecraft -> {
+			Modules.SCOREBOARD.setEnabled(true);
+			Modules.SCOREBOARD.setPosition(minecraft, chatBox[0] + 4, chatBox[1] + 4, width, height);
+		});
+		context.waitTicks(3);
+		int[] boardBox = elementBox(context, Modules.SCOREBOARD);
+		check(boardBox[0] >= chatBox[0] && boardBox[1] >= chatBox[1] && boardBox[0] + boardBox[2] + 12 <= chatBox[0] + chatBox[2] && boardBox[1] + boardBox[3] + 6 <= chatBox[1] + chatBox[3],
+			"이 검사는 스코어보드 예시가 채팅창 안에 들어가야 합니다: " + java.util.Arrays.toString(boardBox) + " / 채팅 " + java.util.Arrays.toString(chatBox));
+		double boardX = boardBox[0] + boardBox[2] / 2.0;
+		double boardY = boardBox[1] + boardBox[3] / 2.0;
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(boardX, boardY, 0);
+			minecraft.screen.mouseDragged(boardX + 12, boardY + 6, 0, 0, 0);
+			minecraft.screen.mouseReleased(boardX + 12, boardY + 6, 0);
+		});
+		int[] draggedBoard = elementBox(context, Modules.SCOREBOARD);
+		check(selection(context).equals(Set.of(Modules.SCOREBOARD)), "채팅창 자리에 놓인 스코어보드를 눌렀는데 그것이 선택되지 않았습니다: " + names(selection(context)));
+		check(Math.abs(draggedBoard[0] - boardBox[0] - 12) <= 1 && Math.abs(draggedBoard[1] - boardBox[1] - 6) <= 1,
+			"채팅창 자리에 놓인 스코어보드가 끌리지 않았습니다: " + java.util.Arrays.toString(boardBox) + " → " + java.util.Arrays.toString(draggedBoard));
+		context.runOnClient(minecraft -> minecraft.screen.mouseScrolled(boardX + 12, boardY + 6, 0, 1));
+		check(Math.abs(Modules.SCOREBOARD.scale.get() - 1.1) < 0.02 && exactly(Modules.CHAT.scale.get(), 1.0),
+			"채팅창 자리에 놓인 스코어보드 위에서 휠을 굴렸는데 크기가 다릅니다: 스코어보드 " + Modules.SCOREBOARD.scale.get() + ", 채팅 " + Modules.CHAT.scale.get());
+		context.takeScreenshot("hud-edit-scoreboard-over-chat");
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(width - 67, 23, 0);
+			minecraft.screen.mouseReleased(width - 67, 23, 0);
+			Modules.SCOREBOARD.resetPosition();
+			Modules.SCOREBOARD.scale.reset();
+			Modules.SCOREBOARD.setEnabled(false);
+		});
 
 		// 오른쪽 위 손잡이를 끌면 왼쪽 아래를 기준으로 커지고, 채팅만 선택된다.
 		context.runOnClient(minecraft -> {

@@ -258,16 +258,26 @@ public class HudEditScreen extends Screen {
 	private List<HudElement> enabledElements() {
 		List<HudElement> elements = new ArrayList<>();
 
-		// 넓은 바닐라 요소(타이틀, 채팅 등)를 먼저 넣어 아래에 깐다. 그 위에 놓인 작은 요소가 가려지거나 클릭을 빼앗기지 않는다.
-		for (boolean underlay : new boolean[] {true, false}) {
+		// 넓은 요소를 먼저 넣어 아래에 깐다. 그 위에 놓인 요소가 가려지거나 클릭을 빼앗기지 않는다.
+		// 맨 아래는 옮길 수 없는 채팅, 그 위가 타이틀·스코어보드·보스바, 맨 위가 나머지다.
+		for (int layer = 0; layer < 3; layer++) {
 			for (HudElement element : Modules.HUD) {
-				if (element.isEnabled() && element.underlay() == underlay) {
+				if (element.isEnabled() && layer(element) == layer) {
 					elements.add(element);
 				}
 			}
 		}
 
 		return elements;
+	}
+
+	/** 편집 화면에서 요소가 놓이는 층 (0 이 맨 아래). */
+	private static int layer(HudElement element) {
+		if (!element.movable()) {
+			return 0;
+		}
+
+		return element.underlay() ? 1 : 2;
 	}
 
 	private boolean contains(HudElement element, double mouseX, double mouseY) {

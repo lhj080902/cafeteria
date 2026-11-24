@@ -85,10 +85,11 @@ public abstract class VanillaHudElement extends HudElement {
 
 	/**
 	 * 옮기지 않은 요소의 자리: 바닐라 상자가 여유 공간에서 차지하던 비율을, 크기를 바꾼 뒤의 여유 공간에 그대로 적용한다.
-	 * 가운데 있던 것은 가운데에, 오른쪽 끝에 있던 것은 오른쪽 끝에 남는다. 화면보다 크면 왼쪽·위에 붙인다.
+	 * 가운데 있던 것은 가운데에, 오른쪽 끝에 있던 것은 오른쪽 끝에 남는다.
+	 * 원래 크기로는 화면보다 커도(여유 공간이 음수) 비율은 같은 뜻이므로 그대로 쓴다. 크기를 바꾼 뒤에도 화면보다 크면 왼쪽·위에 붙인다.
 	 */
 	private static int place(int start, int free, int scaledFree) {
-		if (free <= 0 || scaledFree <= 0) {
+		if (free == 0 || scaledFree <= 0) {
 			return 0;
 		}
 
