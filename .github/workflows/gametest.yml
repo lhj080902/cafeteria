@@ -32,6 +32,8 @@ jobs:
             run_dir: productionClientGameTest
     defaults:
       run:
+        # bash 를 적어 줘야 pipefail 이 켜진다. 없으면 "gradlew | tee" 에서 gradlew 의 실패가 가려진다.
+        shell: bash
         working-directory: mod
     steps:
       - uses: actions/checkout@v7

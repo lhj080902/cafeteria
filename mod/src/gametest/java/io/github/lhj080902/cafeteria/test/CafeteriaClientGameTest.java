@@ -26,6 +26,7 @@ import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
 import org.lwjgl.glfw.GLFW;
@@ -893,6 +894,13 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	 */
 	private static void testPotionIcons(ClientGameTestContext context, TestServerContext server) {
 		check(Modules.POTIONS.icons.get(), "효과 아이콘은 기본으로 켜져 있어야 합니다");
+		// 속도·힘 효과에서 나오는 입자는 내 주변 아무 데나 떠다녀서, 카메라 앞에 뜨면 아래에서 재는 자리를 덮는다.
+		// 입자 설정을 "최소"로 두면 새로 생기지 않는다. 이미 떠 있던 것(수명 최대 40틱)은 아래에서 기다리는 동안 사라진다.
+		ParticleStatus particles = context.computeOnClient(minecraft -> {
+			ParticleStatus before = minecraft.options.particles().get();
+			minecraft.options.particles().set(ParticleStatus.MINIMAL);
+			return before;
+		});
 		server.runCommand("effect give @a minecraft:blindness 120 0 true");
 		context.waitTicks(50);
 		// 발전 과제 알림이 오른쪽 위를 가리지 않게 치우고, 다른 HUD 도 잠시 끈다.
@@ -936,6 +944,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			Modules.POTIONS.hideVanilla.reset();
 			Modules.POTIONS.resetPosition();
 			others.forEach(element -> element.setEnabled(true));
+			minecraft.options.particles().set(particles);
 		});
 		server.runCommand("effect clear @a minecraft:blindness");
 		context.waitTicks(40);
