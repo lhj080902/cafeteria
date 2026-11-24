@@ -125,5 +125,8 @@
 	"cafeteria.hud.sample.scoreboard_line": "항목 %s",
 	"cafeteria.module.bossbar": "보스바",
 	"cafeteria.module.bossbar.desc": "위쪽 보스 체력 막대의 위치·크기",
-	"cafeteria.hud.sample.bossbar": "보스바"
+	"cafeteria.hud.sample.bossbar": "보스바",
+	"cafeteria.module.chat": "채팅 크기",
+	"cafeteria.module.chat.desc": "채팅창 전체 배율",
+	"cafeteria.hud.sample.chat": "채팅 글자 크기 예시"
 }

@@ -92,6 +92,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testTitlePlacement(context, server);
 			testScoreboardPlacement(context, server);
 			testBossbarPlacement(context, server);
+			testChatScale(context, input);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
 			testConfig(context);
@@ -1719,6 +1720,228 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
 			}
 		});
+	}
+
+	/** 채팅창을 비우고 표시 색(aqua) 꽉 찬 글자 한 메시지를 넣는다. 채팅은 10초 뒤에 흐려지므로 잴 때마다 새로 넣는다. */
+	private static void showChatMarker(ClientGameTestContext context, int characters) {
+		context.runOnClient(minecraft -> {
+			minecraft.gui.getChat().clearMessages(false);
+			minecraft.gui.getChat().addMessage(Component.literal("█".repeat(characters)).withStyle(style -> style
+				.withColor(net.minecraft.ChatFormatting.AQUA)
+				.withClickEvent(new net.minecraft.network.chat.ClickEvent(net.minecraft.network.chat.ClickEvent.Action.SUGGEST_COMMAND, "/cafeteria-test"))));
+		});
+		context.waitTicks(3);
+	}
+
+	/** 채팅의 (x, y) 자리에 있는 글자에 달린 클릭 명령. 없으면 null. 메서드 이름이 환경마다 달라서 형식(Style 을 돌려주고 double 두 개를 받는)으로 찾는다. */
+	private static String chatClickValueAt(ClientGameTestContext context, double x, double y) {
+		try {
+			return context.computeOnClient(minecraft -> {
+				for (Method method : ChatComponent.class.getDeclaredMethods()) {
+					if (method.getReturnType() == net.minecraft.network.chat.Style.class && java.util.Arrays.equals(method.getParameterTypes(), new Class<?>[] {double.class, double.class})) {
+						method.setAccessible(true);
+						net.minecraft.network.chat.Style style = (net.minecraft.network.chat.Style) method.invoke(minecraft.gui.getChat(), x, y);
+						return style == null || style.getClickEvent() == null ? null : style.getClickEvent().getValue();
+					}
+				}
+
+				throw new AssertionError("채팅에서 글자 스타일을 찾는 메서드가 없습니다");
+			});
+		} catch (ReflectiveOperationException e) {
+			throw new AssertionError("채팅에서 글자 스타일을 읽을 수 없습니다", e);
+		}
+	}
+
+	/**
+	 * 채팅 배율: 글자·줄 간격·폭·높이가 같은 비율로 바뀌고(한 줄에 들어가는 글자 수는 그대로), 왼쪽 아래는 제자리에 있다.
+	 * 편집 화면에서 채팅은 옮길 수 없고 혼자서만 선택된다.
+	 */
+	private static void testChatScale(ClientGameTestContext context, TestInput input) {
+		check(Modules.CHAT.isEnabled() && exactly(Modules.CHAT.scale.get(), 1.0), "채팅 요소는 기본으로 켜져 있고 100%여야 합니다");
+		int width = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth());
+		int height = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledHeight());
+		int chatBottom = height - 40;
+		context.runOnClient(minecraft -> {
+			minecraft.gui.getChat().clearMessages(false);
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.CHAT);
+			}
+		});
+		context.waitTicks(3);
+		check(markerBounds(context, "chat-none")[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다");
+
+		// 1) 기본 상태(100%)는 요소를 끈 것(바닐라 그대로)과 같다.
+		context.runOnClient(minecraft -> Modules.CHAT.setEnabled(false));
+		showChatMarker(context, 10);
+		double[] vanilla = markerBounds(context, "chat-vanilla");
+		check(vanilla[0] > 100, "채팅 글자가 화면에 보이지 않습니다: " + describe(vanilla));
+		context.runOnClient(minecraft -> Modules.CHAT.setEnabled(true));
+		showChatMarker(context, 10);
+		double[] normal = markerBounds(context, "chat-default");
+		check(java.util.Arrays.equals(normal, vanilla), "기본 상태의 채팅이 바닐라와 다르게 그려졌습니다: " + describe(vanilla) + " → " + describe(normal));
+		check(inside(normal, elementBox(context, Modules.CHAT)), "채팅 글자가 채팅 요소 상자 밖에 있습니다: " + describe(normal) + " / 상자 " + java.util.Arrays.toString(elementBox(context, Modules.CHAT)));
+
+		// 2) 200%: 글자의 너비·높이가 두 배가 되고, 채팅창의 왼쪽 아래(0, 화면 높이 - 40)를 기준으로 커진다.
+		context.runOnClient(minecraft -> Modules.CHAT.scale.set(2.0));
+		context.waitTicks(3);
+		showChatMarker(context, 10);
+		double[] doubled = markerBounds(context, "chat-double");
+		check(Math.abs((doubled[3] - doubled[1]) - (normal[3] - normal[1]) * 2) <= 2 && Math.abs((doubled[4] - doubled[2]) - (normal[4] - normal[2]) * 2) <= 2,
+			"채팅 글자가 두 배가 되지 않았습니다: " + describe(normal) + " → " + describe(doubled));
+		check(Math.abs(doubled[1] - normal[1] * 2) <= 2 && Math.abs((chatBottom - doubled[4]) - (chatBottom - normal[4]) * 2) <= 2,
+			"채팅이 왼쪽 아래를 기준으로 커지지 않았습니다: " + describe(normal) + " → " + describe(doubled));
+		check(inside(doubled, elementBox(context, Modules.CHAT)), "키운 채팅 글자가 채팅 요소 상자 밖에 있습니다: " + describe(doubled));
+
+		// 3) 채팅을 열었을 때 글자 위에서 클릭이 맞는 자리에 걸린다 (화면 좌표를 채팅 좌표로 바꾸는 쪽도 같은 배율을 쓴다).
+		context.setScreen(() -> new ChatScreen(""));
+		context.waitTicks(3);
+		double[] focused = markerBounds(context, "chat-double-open");
+		check(focused[0] > 100, "채팅을 열었는데 글자가 보이지 않습니다");
+		String clicked = chatClickValueAt(context, (focused[1] + focused[3]) / 2, (focused[2] + focused[4]) / 2);
+		check("/cafeteria-test".equals(clicked), "키운 채팅에서 글자 위의 클릭이 걸리지 않습니다: " + clicked);
+		check(chatClickValueAt(context, (focused[1] + focused[3]) / 2, focused[2] - 30) == null, "글자가 없는 곳에서 클릭이 걸렸습니다");
+		context.setScreen(() -> null);
+		context.waitFor(minecraft -> minecraft.screen == null);
+
+		// 4) 한 줄에 들어가는 글자 수는 그대로다: 여러 줄로 나뉘는 긴 메시지가 125%에서도 같은 줄 수로, 1.25배 크기로 보인다.
+		context.runOnClient(minecraft -> Modules.CHAT.scale.set(1.0));
+		context.waitTicks(3);
+		showChatMarker(context, 110);
+		double[] wrapped = markerBounds(context, "chat-wrapped");
+		check(wrapped[4] - wrapped[2] > (normal[4] - normal[2]) * 2, "긴 메시지가 여러 줄로 나뉘지 않아서 비교할 수 없습니다: " + describe(wrapped));
+		context.runOnClient(minecraft -> Modules.CHAT.scale.set(1.25));
+		context.waitTicks(3);
+		showChatMarker(context, 110);
+		double[] wrappedLarger = markerBounds(context, "chat-wrapped-125");
+		check(Math.abs((wrappedLarger[4] - wrappedLarger[2]) - (wrapped[4] - wrapped[2]) * 1.25) <= 3 && Math.abs((wrappedLarger[3] - wrappedLarger[1]) - (wrapped[3] - wrapped[1]) * 1.25) <= 3,
+			"배율을 바꾸니 줄바꿈이 달라졌습니다: " + describe(wrapped) + " → " + describe(wrappedLarger));
+
+		// 5) 요소를 끄면 배율이 남아 있어도 바닐라 그대로다.
+		context.runOnClient(minecraft -> {
+			Modules.CHAT.scale.set(2.0);
+			Modules.CHAT.setEnabled(false);
+		});
+		context.waitTicks(3);
+		showChatMarker(context, 10);
+		double[] disabled = markerBounds(context, "chat-disabled");
+		check(java.util.Arrays.equals(disabled, vanilla), "채팅 요소를 껐는데 바닐라와 다릅니다: " + describe(vanilla) + " → " + describe(disabled));
+
+		// 6) 편집 화면: 채팅은 혼자서만 선택되고 옮길 수 없다.
+		context.runOnClient(minecraft -> {
+			Modules.CHAT.scale.reset();
+			minecraft.gui.getChat().clearMessages(false);
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.CHAT || element == Modules.FPS || element == Modules.CPS);
+			}
+		});
+		context.setScreen(() -> new HudEditScreen(null));
+		context.runOnClient(minecraft -> {
+			Modules.FPS.setPosition(minecraft, width - 70, 20, width, height);
+			Modules.CPS.setPosition(minecraft, width - 70, 50, width, height);
+		});
+		context.waitTicks(3);
+		int[] chatBox = elementBox(context, Modules.CHAT);
+		check(chatBox[0] == 0 && chatBox[1] + chatBox[3] == chatBottom && chatBox[2] > 100 && chatBox[3] > 30, "채팅 요소 상자가 채팅창 자리가 아닙니다: " + java.util.Arrays.toString(chatBox));
+		check(chatBox[0] + chatBox[2] < width - 75, "이 검사는 채팅창이 FPS·CPS 를 놓은 자리와 겹치지 않아야 합니다: " + java.util.Arrays.toString(chatBox));
+		double insideX = chatBox[2] / 2.0;
+		double insideY = chatBox[1] + chatBox[3] / 2.0;
+
+		input.holdControl();
+		input.pressKey(GLFW.GLFW_KEY_A);
+		input.releaseControl();
+		check(selection(context).equals(Set.of(Modules.FPS, Modules.CPS)), "Ctrl+A 에 채팅이 들어갔거나 다른 요소가 빠졌습니다: " + names(selection(context)));
+
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(width - 2, 2, 0);
+			minecraft.screen.mouseDragged(1, chatBottom - 2, 0, 0, 0);
+			minecraft.screen.mouseReleased(1, chatBottom - 2, 0);
+		});
+		check(selection(context).equals(Set.of(Modules.FPS, Modules.CPS)), "화면 전체를 박스로 골랐는데 선택이 다릅니다: " + names(selection(context)));
+
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(insideX, insideY, 0);
+			minecraft.screen.mouseReleased(insideX, insideY, 0);
+		});
+		check(selection(context).equals(Set.of(Modules.CHAT)), "채팅창 안을 눌렀는데 채팅만 선택되지 않았습니다: " + names(selection(context)));
+		context.takeScreenshot("hud-edit-chat-selected");
+
+		// 채팅을 고른 채로 방향키를 누르거나 채팅창 안에서 끌어도 아무것도 움직이지 않는다.
+		int[] fpsBefore = position(context, Modules.FPS);
+		int[] cpsBefore = position(context, Modules.CPS);
+		input.pressKey(GLFW.GLFW_KEY_RIGHT);
+		check(selection(context).equals(Set.of(Modules.CHAT)), "방향키를 눌렀더니 채팅 선택이 풀렸습니다");
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(insideX, insideY, 0);
+			minecraft.screen.mouseDragged(insideX + 40, insideY - 20, 0, 0, 0);
+			minecraft.screen.mouseReleased(insideX + 40, insideY - 20, 0);
+		});
+		check(java.util.Arrays.equals(elementBox(context, Modules.CHAT), chatBox), "채팅창이 움직였습니다: " + java.util.Arrays.toString(elementBox(context, Modules.CHAT)));
+		check(java.util.Arrays.equals(position(context, Modules.FPS), fpsBefore) && java.util.Arrays.equals(position(context, Modules.CPS), cpsBefore), "채팅을 끌었는데 다른 요소가 움직였습니다");
+		check(!selection(context).contains(Modules.CHAT), "채팅창 안에서 끌어 박스 선택을 했는데 채팅이 선택에 남았습니다: " + names(selection(context)));
+
+		// Ctrl+클릭으로는 채팅이 선택에 섞이지 않는다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(width - 67, 23, 0);
+			minecraft.screen.mouseReleased(width - 67, 23, 0);
+		});
+		check(selection(context).equals(Set.of(Modules.FPS)), "FPS 를 눌렀는데 선택이 다릅니다: " + names(selection(context)));
+		input.holdControl();
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(insideX, insideY, 0);
+			minecraft.screen.mouseReleased(insideX, insideY, 0);
+		});
+		input.releaseControl();
+		check(selection(context).equals(Set.of(Modules.FPS)), "Ctrl+클릭으로 채팅이 선택에 섞였습니다: " + names(selection(context)));
+
+		// 채팅을 고른 뒤 다른 요소를 Ctrl+클릭하면 채팅은 선택에서 빠진다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(insideX, insideY, 0);
+			minecraft.screen.mouseReleased(insideX, insideY, 0);
+		});
+		input.holdControl();
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(width - 67, 53, 0);
+			minecraft.screen.mouseReleased(width - 67, 53, 0);
+		});
+		input.releaseControl();
+		check(selection(context).equals(Set.of(Modules.CPS)), "채팅과 다른 요소가 함께 선택됐습니다: " + names(selection(context)));
+
+		// 오른쪽 위 손잡이를 끌면 왼쪽 아래를 기준으로 커지고, 채팅만 선택된다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(chatBox[0] + chatBox[2], chatBox[1], 0);
+			minecraft.screen.mouseDragged(chatBox[2] * 1.2, chatBox[1] - chatBox[3] * 0.2, 0, 0, 0);
+		});
+		check(context.computeOnClient(minecraft -> ((HudEditScreen) minecraft.screen).isResizing()), "채팅의 오른쪽 위 손잡이가 잡히지 않았습니다");
+		context.runOnClient(minecraft -> minecraft.screen.mouseReleased(chatBox[2] * 1.2, chatBox[1] - chatBox[3] * 0.2, 0));
+		int[] resized = elementBox(context, Modules.CHAT);
+		check(Math.abs(Modules.CHAT.scale.get() - 1.2) < 0.02, "채팅이 꼭짓점을 끈 만큼 커지지 않았습니다: " + Modules.CHAT.scale.get());
+		check(resized[0] == 0 && resized[1] + resized[3] == chatBottom, "채팅을 키웠는데 왼쪽 아래가 움직였습니다: " + java.util.Arrays.toString(resized));
+		check(selection(context).equals(Set.of(Modules.CHAT)), "채팅 손잡이를 끌었는데 채팅만 선택되지 않았습니다: " + names(selection(context)));
+		// 왼쪽 위에는 손잡이가 없다: 그 자리를 눌러도 크기 조절이 시작되지 않는다.
+		context.runOnClient(minecraft -> minecraft.screen.mouseClicked(resized[0], resized[1], 0));
+		check(!context.computeOnClient(minecraft -> ((HudEditScreen) minecraft.screen).isResizing()), "채팅의 왼쪽 위에서 크기 조절이 시작됐습니다");
+		context.runOnClient(minecraft -> minecraft.screen.mouseReleased(resized[0], resized[1], 0));
+
+		// 휠도 채팅 배율을 바꾸고, 위치 초기화는 채팅을 건드리지 않는다.
+		context.runOnClient(minecraft -> minecraft.screen.mouseScrolled(insideX, insideY, 0, 1));
+		check(Math.abs(Modules.CHAT.scale.get() - 1.3) < 0.02, "휠로 채팅 배율이 바뀌지 않았습니다: " + Modules.CHAT.scale.get());
+		context.clickScreenButton("cafeteria.hud_edit.reset");
+		int[] afterReset = elementBox(context, Modules.CHAT);
+		check(Math.abs(Modules.CHAT.scale.get() - 1.3) < 0.02 && afterReset[0] == 0 && afterReset[1] + afterReset[3] == chatBottom, "위치 초기화가 채팅을 건드렸습니다");
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+
+		context.runOnClient(minecraft -> {
+			Modules.CHAT.scale.reset();
+			minecraft.gui.getChat().clearMessages(false);
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+			}
+		});
+		context.waitTicks(3);
 	}
 
 	private static void testFullbright(ClientGameTestContext context, TestInput input, TestServerContext server) {

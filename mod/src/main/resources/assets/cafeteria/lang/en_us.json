@@ -125,5 +125,8 @@
 	"cafeteria.hud.sample.scoreboard_line": "Line %s",
 	"cafeteria.module.bossbar": "Boss Bar",
 	"cafeteria.module.bossbar.desc": "Move and resize boss bars",
-	"cafeteria.hud.sample.bossbar": "Boss Bar"
+	"cafeteria.hud.sample.bossbar": "Boss Bar",
+	"cafeteria.module.chat": "Chat Size",
+	"cafeteria.module.chat.desc": "Scale the whole chat",
+	"cafeteria.hud.sample.chat": "Chat text size"
 }

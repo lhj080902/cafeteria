@@ -1,9 +1,11 @@
 package io.github.lhj080902.cafeteria.mixin;
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import io.github.lhj080902.cafeteria.Modules;
 import net.minecraft.client.GuiMessage;
 import net.minecraft.client.gui.components.ChatComponent;
+import net.minecraft.util.Mth;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
@@ -27,6 +29,21 @@ public abstract class ChatComponentMixin {
 		require = 0)
 	private GuiMessage cafeteria$addTime(GuiMessage message) {
 		return Modules.CHAT_TIME.decorate(message);
+	}
+
+	/**
+	 * 채팅 배율: 채팅창이 쓰는 글자 배율에 채팅 요소의 크기를 곱한다.
+	 * 그리기, 줄바꿈, 마우스 좌표 변환이 모두 이 값을 거치므로 글자·줄 간격과 클릭 위치가 함께 맞는다.
+	 */
+	@ModifyReturnValue(method = "getScale", at = @At("RETURN"), require = 0)
+	private double cafeteria$scaleChat(double original) {
+		return original * Modules.CHAT.factor();
+	}
+
+	/** 채팅 배율: 폭도 같은 비율로 늘려서 한 줄에 들어가는 글자 수가 그대로이게 한다. */
+	@ModifyReturnValue(method = "getWidth()I", at = @At("RETURN"), require = 0)
+	private int cafeteria$widenChat(int original) {
+		return Mth.floor(original * Modules.CHAT.factor());
 	}
 
 	/** 무한 채팅: 화면에 보이는 줄(줄바꿈된 줄 단위)의 보관 한도 100줄을 늘린다. */

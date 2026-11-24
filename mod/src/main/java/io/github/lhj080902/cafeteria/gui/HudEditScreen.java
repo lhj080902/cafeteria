@@ -27,6 +27,8 @@ import java.util.Set;
  *   <li>방향키: 선택한 요소를 1픽셀씩 이동 (Shift 와 함께 누르면 10픽셀).</li>
  *   <li>꼭짓점 손잡이를 끌기: 크기 조절 (1% 단위). 반대쪽 꼭짓점은 제자리에 있다.</li>
  *   <li>휠: 크기 조절 (10% 단위). 오른쪽 클릭: 그 요소의 설정 열기.</li>
+ *   <li>옮길 수 없는 요소(채팅): 눌렀다 떼면 그것만 선택된다. 다른 요소와 함께 선택되지 않고, 박스 선택·Ctrl+A·Ctrl+클릭에 들어가지 않는다.
+ *       그 위에서 끌면 빈 곳처럼 박스 선택이 된다.</li>
  * </ul>
  */
 public class HudEditScreen extends Screen {
@@ -75,6 +77,10 @@ public class HudEditScreen extends Screen {
 	private double boxStartY;
 	private double boxEndX;
 	private double boxEndY;
+	/** 박스 선택을 시작한 뒤 마우스를 움직였는지. */
+	private boolean boxMoved;
+	/** 옮길 수 없는 요소(채팅) 위에서 눌렀을 때 그 요소. 끌지 않고 떼면 이것만 선택한다. */
+	private HudElement clickSelect;
 	/** Ctrl 을 누른 채 박스를 그리기 시작했을 때 이미 선택돼 있던 요소들. */
 	private final Set<HudElement> boxBase = new LinkedHashSet<>();
 
@@ -104,6 +110,7 @@ public class HudEditScreen extends Screen {
 		dragging = null;
 		resizing = null;
 		boxSelecting = false;
+		clickSelect = null;
 	}
 
 	/** 지금 선택돼 있는 요소들 (선택한 순서). */
@@ -351,8 +358,10 @@ public class HudEditScreen extends Screen {
 		HudElement element = elementAt(mouseX, mouseY);
 
 		if (button == 0) {
-			if (element == null) {
+			if (element == null || !element.movable()) {
+				// 옮길 수 없는 요소(채팅)는 끌 수 없다. 그 위에서 끌면 빈 곳처럼 박스 선택이 되고, 끌지 않고 떼면 그 요소만 선택한다.
 				startBoxSelection(mouseX, mouseY);
+				clickSelect = element != null && !hasControlDown() ? element : null;
 				return true;
 			}
 
@@ -364,6 +373,8 @@ public class HudEditScreen extends Screen {
 					return true;
 				}
 
+				// 옮길 수 없는 요소는 다른 요소와 함께 선택되지 않는다.
+				selection.removeIf(other -> !other.movable());
 				selection.add(element);
 			} else if (selection.contains(element)) {
 				collapseOnRelease = selection.size() > 1;
@@ -423,6 +434,9 @@ public class HudEditScreen extends Screen {
 			selection.clear();
 		}
 
+		selection.removeIf(element -> !element.movable());
+		boxMoved = false;
+		clickSelect = null;
 		boxBase.clear();
 		boxBase.addAll(selection);
 		boxSelecting = true;
@@ -460,7 +474,7 @@ public class HudEditScreen extends Screen {
 		};
 	}
 
-	/** 박스에 조금이라도 닿은 요소를 선택한다. */
+	/** 박스에 조금이라도 닿은 요소를 선택한다. 옮길 수 없는 요소(채팅)는 넣지 않는다. */
 	private void updateBoxSelection() {
 		int[] box = box();
 		selection.clear();
@@ -470,7 +484,7 @@ public class HudEditScreen extends Screen {
 			int x = element.x(minecraft, width);
 			int y = element.y(minecraft, height);
 
-			if (x < box[2] && x + element.width(minecraft) > box[0] && y < box[3] && y + element.height(minecraft) > box[1]) {
+			if (element.movable() && x < box[2] && x + element.width(minecraft) > box[0] && y < box[3] && y + element.height(minecraft) > box[1]) {
 				selection.add(element);
 			}
 		}
@@ -488,6 +502,7 @@ public class HudEditScreen extends Screen {
 		}
 
 		if (boxSelecting) {
+			boxMoved = true;
 			boxEndX = mouseX;
 			boxEndY = mouseY;
 			updateBoxSelection();
@@ -599,7 +614,12 @@ public class HudEditScreen extends Screen {
 		}
 
 		if (button == 0 && boxSelecting) {
+			if (clickSelect != null && !boxMoved) {
+				selectOnly(clickSelect);
+			}
+
 			boxSelecting = false;
+			clickSelect = null;
 			boxBase.clear();
 			return true;
 		}
@@ -643,7 +663,13 @@ public class HudEditScreen extends Screen {
 	public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
 		if (isSelectAll(keyCode)) {
 			selection.clear();
-			selection.addAll(enabledElements());
+
+			for (HudElement element : enabledElements()) {
+				if (element.movable()) {
+					selection.add(element);
+				}
+			}
+
 			return true;
 		}
 

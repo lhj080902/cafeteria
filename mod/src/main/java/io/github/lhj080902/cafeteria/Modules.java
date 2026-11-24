@@ -2,6 +2,7 @@ package io.github.lhj080902.cafeteria;
 
 import io.github.lhj080902.cafeteria.hud.ArmorHud;
 import io.github.lhj080902.cafeteria.hud.BossbarHud;
+import io.github.lhj080902.cafeteria.hud.ChatHud;
 import io.github.lhj080902.cafeteria.hud.ComboHud;
 import io.github.lhj080902.cafeteria.hud.CoordinatesHud;
 import io.github.lhj080902.cafeteria.hud.CpsHud;
@@ -64,11 +65,12 @@ public final class Modules {
 	public static final TitleHud TITLE = new TitleHud();
 	public static final ScoreboardHud SCOREBOARD = new ScoreboardHud();
 	public static final BossbarHud BOSSBAR = new BossbarHud();
+	public static final ChatHud CHAT = new ChatHud();
 
 	/** 설정 화면의 "기능" 묶음. */
 	public static final List<Module> FEATURES = List.of(FREELOOK, ZOOM, HITBOX, FULLBRIGHT, LOW_FIRE, NO_TUTORIAL, MENU_BACKGROUND, CHAT_TIME, INFINITE_CHAT, SCREENSHOT);
 	/** 설정 화면의 "HUD" 묶음이자 화면에 그리는 순서. */
-	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH, TITLE, SCOREBOARD, BOSSBAR);
+	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH, TITLE, SCOREBOARD, BOSSBAR, CHAT);
 	public static final List<Module> ALL;
 
 	static {
