@@ -1,4 +1,4 @@
-# Cafeteria 인수인계 (2026-11-23 기준)
+# Cafeteria 인수인계 (2026-11-24 기준)
 
 Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)로 넘기기 위한 문서다.
 코드 규칙과 명령어는 저장소 루트의 `CLAUDE.md`, 사용자용 설명은 `README.md` 에 있다. 여기에는 **지금 상태, 남은 일, 왜 이렇게 만들었는지**만 적는다.
@@ -6,15 +6,16 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 ## 1. 지금 상태
 
 - 저장소: https://github.com/lhj080902/cafeteria (`main`, 공개)
-- 최신 버전: **1.2.2** (모드와 런처가 같은 번호를 쓴다)
+- 릴리스된 최신 버전: **1.2.2** (모드와 런처가 같은 번호를 쓴다)
 - 릴리스: [v1.2.2](https://github.com/lhj080902/cafeteria/releases/tag/v1.2.2) – `Cafeteria-Setup-1.2.2.exe`, `.blockmap`, `latest.yml` 세 파일이 올라가 있고, 빌드 결과와 같은 파일인지 확인했다.
+- **작업 중인 버전: 1.3.0 (릴리스 전)**. 브랜치 `feature/direct-launch-login` 에 있고 push 하지 않았다. 런처 안 Microsoft 로그인과 게임 바로 실행을 넣었고, 모드 코드는 바뀌지 않았다(번호만 맞춤). 릴리스는 아래 실제 실행 검사를 돌려 본 뒤 사용자가 승인하면 한다. 1.3.0 태그·릴리스는 아직 없다.
 - 대상: Minecraft 1.21.4, Fabric Loader 0.20.1, Fabric API 0.119.4+1.21.4, Windows. (버전은 `mod/gradle.properties` 와 `launcher/src/main/constants.js` 에서 맞춘다)
 
 ### 사용자가 처음에 정한 것
 
 - 루나 클라이언트처럼 PvP 기능만 기본으로 넣고, 나머지는 사용자가 모드를 직접 추가한다.
 - 런처 이름은 **카페테리아(Cafeteria)**. Minecraft **1.21.4 하나만**, Fabric, Windows.
-- 로그인과 게임 실행은 **공식 Minecraft 런처에 맡긴다** (런처는 Fabric 프로필과 모드를 설치하고 공식 런처를 연다). 이유는 4번 참고.
+- 로그인과 게임 실행은 처음에는 **공식 Minecraft 런처에 맡기기로** 했다 (런처는 Fabric 프로필과 모드를 설치하고 공식 런처를 열었다). **2026-11-24 에 바뀌었다**: 사용자가 "커피팩토리처럼" 런처 하나로 로그인하고 바로 게임에 들어가게 해 달라고 요청해서 1.3.0 에서 Microsoft 로그인과 바로 실행을 넣었다. 공식 런처 방식은 설정의 "게임 실행 방식"에서 고를 수 있게 남겼다. 풀어낸 방법은 4번 참고.
 - CurseForge API 키는 런처에 넣지 않고 사용자가 설정에 직접 입력한다.
 - 결과물은 설치 파일(Setup.exe)로 받는다.
 
@@ -44,13 +45,20 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 
 ### 런처 (`launcher/`)
 
-홈(플레이), 내 모드(추가·켜기/끄기·삭제·업데이트), 모드 찾기(Modrinth, CurseForge), 설정 가져오기(루나·기본 마인크래프트), 설정, 런처 자동 업데이트.
+홈(계정, 플레이), 내 모드(추가·켜기/끄기·삭제·업데이트), 모드 찾기(Modrinth, CurseForge), 설정 가져오기(루나·기본 마인크래프트), 설정(게임 실행 방식 포함), 런처 자동 업데이트.
 
 | 파일 (`src/main/`) | 역할 |
 | --- | --- |
 | `main.js`, `preload.js` | Electron 메인 프로세스와 화면에 노출하는 함수 |
 | `installer.js` | Fabric 버전 정보·기본 모드 설치, 공식 런처 프로필 등록 |
 | `official-launcher.js` | 공식 런처 찾아서 실행 |
+| `ms-auth.js` | Microsoft, Xbox, XSTS, Minecraft 로그인 요청과 오류 변환 (`LauncherError`) |
+| `account.js` | `AccountManager`: refresh 토큰을 암호화해 `userData/account.json` 에 저장, 접근 토큰은 메모리에만 두고 필요하면 갱신, 로그아웃 |
+| `login-window.js` | Microsoft 로그인 창 (preload 없음, 디스크에 남지 않는 세션을 열 때마다 새로 만듦) |
+| `version-meta.js` | Mojang `rules` 평가(Windows x64 고정), 라이브러리 경로, 실행에 쓸 라이브러리 목록 |
+| `game-files.js` | 게임 파일 준비: 고정 해시에서 이어지는 sha1 검증 다운로드, 공식 런처 폴더에서 해시가 맞는 파일 복사, 복구 때 전체 재검증 |
+| `game-launch.js` | 실행 인수 조립(클래스패스, JVM·게임 인수, 치환)과 게임 프로세스 시작 |
+| `play-direct.js` | 바로 실행 흐름: 모드 설치, 게임 파일 준비, 실행 |
 | `mods.js` | mods 폴더 관리, 출처 기록(`cafeteria-mods.json`), 같은 모드 교체 |
 | `mod-installer.js`, `mod-updater.js` | 모드 설치(필수 의존성 포함), 새 버전 확인·교체 |
 | `sources/modrinth.js`, `sources/curseforge.js` | 모드 사이트 API |
@@ -60,40 +68,52 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 
 ## 3. 검증한 것과 못 한 것
 
-모든 검증은 **Linux 컨테이너**에서 했다. Windows 에서는 한 번도 실행해 보지 못했다.
+1.2.2 까지의 검증은 모두 **Linux 컨테이너**에서 했다. 1.3.0 작업 중에 Windows 에서 단위 테스트와 짧은 부팅 검사를 처음 돌렸다 (아래 표).
 
 | 대상 | 결과 |
 | --- | --- |
 | 모드 게임 테스트 (개발 환경, 배포용 jar) | 통과 |
 | 모드 + Xaero's Minimap 26.5.0 + World Map 1.46.0 + FastPack 0.3.1 | 통과 |
-| 런처 단위 테스트 106개 (Modrinth 실제 서버 포함) | 통과 |
+| 런처 단위 테스트 106개 (Modrinth 실제 서버 포함) | 1.2.2 까지 통과 |
+| 런처 단위 테스트 162개 (Mojang·Fabric·Modrinth 실제 서버 포함, Windows) | 1.3.0 작업 브랜치에서 159 통과, 3 건너뜀, 실패 0 |
+| 런처 Windows 부팅 (Electron 45.4.1, 소스 실행, 임시 폴더) | 콘솔 오류 없이 켜짐. 홈(계정 줄, 상태 칩, 플레이 안내)과 설정(게임 실행 방식) 화면이 그려지고, 실행 방식을 바꾸면 홈이 바뀜. 짧은 자동 검사였고 전체 수동 검사는 아님 |
+| 모드 `./gradlew compileGametestJava` (Windows, JDK 21) | 성공. 게임 테스트(`runClientGameTest`)는 이 PC 에서 돌리지 않음 |
 | 런처 화면 테스트(E2E): 소스 실행, 패키징된 Linux 실행 파일 | 1.2.0 에서 통과. 그 뒤로는 모드와 버전 번호만 바뀌어 다시 돌리지 않았다 |
 | 설치 파일: 내용물, NSIS 무결성(CRC), `latest.yml` 해시 | 통과 |
-| **Windows 에서 설치·실행, 공식 런처 자동 실행** | 미검증 |
-| **런처 자동 업데이트가 실제로 내려받아지는지** | 미검증. 다음 버전 릴리스를 올린 뒤에 확인할 수 있다 |
+| **Windows 에서 설치·실행, 공식 런처 자동 실행** | 미검증 (설치 파일은 Windows 에서 설치해 본 적 없음) |
+| **Microsoft 로그인 창** (1.3.0). 실제 Microsoft, Xbox, Minecraft 서버로 로그인해서 이름이 표시되는지 | 미검증 |
+| **게임 바로 실행** (1.3.0). 런처에서 게임 파일(약 630MB)을 받고 게임 창이 뜨는지, 오른쪽 Shift 로 모드 설정, 정품 서버 접속 | 미검증 |
+| **로그인 유지와 로그아웃** (1.3.0). 런처를 껐다 켜도 로그인이 유지되고 플레이가 바로 되는지, 로그아웃하면 `account.json` 이 지워지는지 | 미검증 |
+| **공식 런처 방식으로 바꿔서 기존 동작** (1.3.0) | 미검증 (기존 단위 테스트는 통과) |
+| **런처 자동 업데이트가 실제로 내려받아지는지** | 미검증. 1.3.0 릴리스를 올린 뒤 1.2.2 설치본이 스스로 받아 설치하는지 확인한다. 업데이트 코드는 이번에 바꾸지 않았다 |
 | **스크린샷 복사 (Windows)** | 미검증. Linux(X11)에서만 확인. PowerShell 예비 경로는 실행해 본 적 없음 |
 | **CurseForge 실제 서버** | 미검증. API 키가 없어 가짜 응답으로만 검사 |
 | **루나 클라이언트의 실제 폴더 구조** | 미검증. 가짜 폴더로만 검사 |
 | **Sodium·Iris 등 성능 모드와의 호환** | 미검증 |
-| **Windows·macOS 에서 `npm run build:win`** | 미검증. Linux 에서만 빌드했다 |
-| **E2E 테스트를 Windows 에서 실행** | 미검증. 가짜 공식 런처가 셸 스크립트라서 그대로는 안 될 가능성이 높다 |
+| **Windows·macOS 에서 `npm run build:win`** | 미검증. Linux 에서만 빌드했다. Windows 에서는 1.3.0 에서 처음 돌려 봐야 한다 |
+| **E2E 테스트를 Windows 에서 실행** | 미검증. 가짜 공식 런처가 셸 스크립트라서 그대로는 안 될 가능성이 높다. Linux 에서도 1.3.0 에서는 다시 돌리지 못했다 |
 
 ## 4. 남은 일
 
 ### 사용자의 결정을 기다리는 것
 
-1. **Microsoft 로그인 + 게임 직접 실행** (공식 런처를 거치지 않기)
-   - 사용자가 제안했고 아직 결정하지 않았다. "지금 만들기"와 "승인 절차부터 안내" 중에서 고르기로 했다.
-   - 걸림돌: 서드파티 런처가 Minecraft 토큰을 받으려면 Azure 앱을 등록하고 Minecraft API 사용 허가를 신청해야 한다. 허가 전에는 `api.minecraftservices.com/authentication/login_with_xbox` 가 403(`Invalid app registration`)을 돌려준다. 개인 개발자가 허가받는 기준은 확인하지 못했다. ([Minecraft Wiki](https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Microsoft_Authentication_Scheme), [Microsoft Q&A](https://learn.microsoft.com/en-us/answers/questions/5768276/how-to-get-xboxlive-signin-permission-for-azure-ap))
-   - 사용자가 "토큰 방식은 안 되나"라고 물었고 안 된다고 답했다: 런처가 자체 발급한 토큰은 정품 서버에서 통하지 않고, Mojang 토큰을 붙여 넣게 하는 방식은 하루면 만료되며 계정 탈취 수법과 같은 형태다. 비정품(오프라인) 로그인도 넣지 않는다.
-   - 만든다면 필요한 것: Microsoft 기기 코드 로그인 → Xbox Live → XSTS → Minecraft 토큰 → 프로필, 게임 파일·Java 런타임 내려받기, 실행 인수 조립, 계정 화면. 앱 ID 는 CurseForge 키처럼 설정에서 입력받는다.
+1. **Microsoft 로그인 + 게임 직접 실행**: 구현됨. 아래 "1.3.0 에서 해결한 것" 참고.
 2. **포션 HUD 의 "기본 아이콘 숨김" 기본값**: 지금은 꺼짐. 켜짐으로 바꿀지 물어봤고 답을 받지 못했다.
 3. **릴리스 자동화 (GitHub Actions)**: 태그를 올리면 빌드해서 릴리스를 만드는 워크플로를 제안했고 답을 받지 못했다.
+
+### 1.3.0 에서 해결한 것: Microsoft 로그인 + 게임 직접 실행
+
+- 예전에 걸림돌로 본 것은 Azure 앱 등록과 Minecraft API 사용 허가였다. 이번에는 **마인크래프트 공식 런처의 공개 클라이언트 ID**(`00000000402b5328`)로 로그인 창을 열어서 그 둘이 필요 없다. 커피팩토리(`msmc` 라이브러리)가 같은 방식을 쓰고, 실제 PC 에서 확인된 방식이다.
+- **위험**: 이것은 Microsoft 의 승인을 받은 방식이 아니라 **비공식 방식**이다. Microsoft 가 이 클라이언트 ID 를 막으면 모든 사용자의 로그인이 안 된다. 그래서 공식 런처 방식을 설정에서 고를 수 있게 남겨 뒀다 (대비책).
+- 절차: 로그인 창에서 Microsoft 승인 코드, 토큰, Xbox Live, XSTS, Minecraft 토큰, 프로필 순서. refresh 토큰은 `userData/account.json` 에 암호화(`safeStorage`)해 두고 필요할 때 갱신한다. 모두 런처 안에 직접 구현했다 (5번 참고).
+- 사용자가 정한 것은 그대로다: 비정품(오프라인) 로그인과 토큰 붙여 넣기 로그인은 넣지 않았다. 여러 계정 전환, 스킨 표시, 1.21.4 외 버전, Windows x64 가 아닌 곳에서의 바로 실행(그런 곳은 공식 런처 방식으로만 동작)도 하지 않았다.
+- 만들어진 것: 게임 파일 받기(약 630MB, 처음 한 번), Java 21 받기, 실행 인수 조립, 홈의 계정 줄과 "실행 중" 표시, 설정의 "게임 실행 방식"(`launchMode`: `direct` 기본 / `official`).
 
 ### 확인이 필요한 것
 
 - 3번 표의 미검증 항목들. 특히 Windows 에서 설치 → 플레이 → 게임 안 기능을 한 번 돌려 보는 것.
-- 다음 버전을 낼 때 1.2.2 런처가 스스로 업데이트하는지 확인. (1.2.2 이전 버전은 업데이트 주소가 옛 저장소 이름 `cafeteria-client` 로 돼 있어서 자동으로 올라오지 않는다)
+- 1.3.0 을 릴리스한 뒤 1.2.2 런처가 스스로 업데이트하는지 확인. (1.2.2 이전 버전은 업데이트 주소가 옛 저장소 이름 `cafeteria-client` 로 돼 있어서 자동으로 올라오지 않는다)
+- 1.3.0 릴리스 전에 Windows 에서 실제 실행 검사: (1) `npm start` 로 로그인 창을 열어 로그인하고 이름이 뜨는지, (2) 플레이로 다운로드, 게임 창, 오른쪽 Shift 로 모드 설정, 정품 서버 접속, (3) 런처를 껐다 켜도 로그인이 유지되는지, (4) 로그아웃 후 `account.json` 삭제, (5) 공식 런처 방식으로 바꿔 기존 동작, (6) `npm run build:win` 후 설치와 실행, (7) 1.2.2 설치본이 1.3.0 릴리스를 받아 설치하는지.
 
 ### 이 저장소 밖의 일: FastPack
 
@@ -114,6 +134,13 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 - **같은 모드 id 의 jar 를 추가하면 예전 파일을 지운다.** 사이트에 없는 모드(FastPack 등)의 업데이트 방법이다. Cafeteria 모드 자체는 런처가 관리하므로 따로 넣지 못하게 막았다.
 - **설치 파일은 Wine 없이 만든다.** `launcher/scripts/build-win.js` 가 electron-builder 안의 `UninstallerReader` 를 쓰도록 바꾸고, 빌드 뒤에 NSIS 무결성 검사를 직접 해 본다.
 - **서명되지 않은 실행 파일**이라 Windows 가 처음 실행할 때 경고를 띄운다.
+- **로그인과 게임 실행은 라이브러리(`msmc`, `minecraft-launcher-core`) 대신 직접 구현했다.** `minecraft-launcher-core` 는 호스트 허용 목록도 해시 검증도 없이 받아서 CLAUDE.md 의 런처 보안 규칙을 지킬 수 없고, 커피팩토리에서 라이브러리 해시 검사가 동작하지 않고 `client.jar` 를 검사 없이 받는 문제가 있었다. `msmc` 는 `http.js`(시스템 프록시, 테스트용 가짜 fetch)를 거치지 않고 의존성을 끌어오는데, 로그인 절차 자체는 요청 6개뿐이라 직접 만들었다. 새 npm 의존성은 없다. 다운로드는 기존 `http.download`(허용 목록, sha1, `.part`)를 그대로 쓴다.
+- **고정 해시 사슬과 Fabric 구성 고정**: `constants.js` 에 `1.21.4.json` 과 Java 런타임 목록의 주소와 sha1 을 고정하고, 거기서 `client.jar`, 라이브러리, 에셋 인덱스, 에셋, Java 파일의 sha1 이 이어진다. 바로 실행에서는 `meta.fabricmc.net` 의 Fabric 프로필 JSON 을 **받지 않는다** (고정할 해시가 없어 사슬이 끊긴다). 대신 `mainClass`, JVM 인수, 라이브러리 8개의 이름과 sha1 을 `constants.js` 의 `FABRIC` 에 고정했고, 실제 서버 검사가 그 값이 Fabric 서버의 지금 내용과 같은지 비교한다. 공식 런처 방식은 지금처럼 프로필 JSON 을 받아 `.minecraft` 에 저장한다. Minecraft, Fabric, Java 버전을 올릴 때는 이 상수를 같이 바꿔야 한다.
+- **게임 파일 위치**: 런처 데이터 폴더 `%APPDATA%\.cafeteria` 고정 (`paths.js` 의 `dataDir()`, 테스트용 `CAFETERIA_DATA_DIR`). 게임 폴더 설정을 바꿔도 게임 파일은 여기 남는다. Java 는 `runtime/<component>-<version>` 폴더(예: `java-runtime-delta-21.0.7`)에 두고 파일 목록은 `runtime/<component>-<version>.json` 에 둔다. 버전이 폴더 이름에 들어 있어서 Java 를 올려도 예전 파일과 섞이지 않는다.
+- **`javaw.exe` 를 쓴다** (`java.exe` 아님). `java.exe` 는 콘솔 창이 뜨는데, 그 창을 숨기려고 `windowsHide` 를 켜면 게임 창까지 숨겨질 위험이 있다. 커피팩토리에서 실제로 확인된 조합이 `javaw.exe` 에 `windowsHide` 를 켜지 않는 것이라 따랐다. 이번에 직접 확인하지는 못했다. 한계: JVM 이 아예 못 뜨면 `javaw.exe` 가 오류 창을 띄우고, 그 창을 닫을 때까지 런처는 "실행 중"으로 본다. 게임을 켜 둔 채 런처를 껐다 켜면 런처가 그 게임을 몰라서 플레이를 누르면 하나 더 뜬다.
+- **목록 파일(`1.21.4.json`, 에셋 인덱스, Java 목록)은 매번 디스크 내용의 sha1 을 확인**하고 맞을 때만 쓴다. 일반 게임 파일은 평소에는 크기만 보고, 받을 때는 항상 해시를 검증한 뒤 임시 파일에서 이름을 바꾼다. 설치 복구는 전체 sha1 을 다시 계산한다. 공식 런처의 `.minecraft` 에 같은 파일이 있고 sha1 이 맞으면 복사해서 다시 받지 않는다 (Java 는 대상이 아님).
+- **자동 업데이트에 "게임 중 설치 금지"를 넣지 않았다.** 커피팩토리에는 있지만, NSIS 설치 프로그램은 설치 폴더 안의 프로세스만 끝내고 게임은 `%APPDATA%\.cafeteria` 의 Java 로 돌기 때문에 업데이트가 게임을 죽이지 않는다. 또 넣으면 "플레이 후 런처 닫기"를 켠 사용자는 런처가 늘 게임 중에 꺼져서 업데이트가 영영 설치되지 않는다. 업데이트 코드는 이번에 바꾸지 않았다.
+- **Windows 에서 처음 드러난 테스트 2건** (1.3.0 작업을 시작할 때 Windows 의 `npm test` 기준선이 106개 중 2 실패였다. 커밋 `dcf3716`): (1) `importer.test.js` 가 구분자가 다른 경로를 그대로 비교했다. 양쪽을 `path.normalize` 로 맞췄다. (2) `mod-installer.js` 가 `a:b.jar` 같은 이름을 Windows 에서 거부하지 못했다. Windows 의 `path.basename` 이 콜론까지를 잘라 `b.jar` 로 만들기 때문이다. `path.basename` 을 부르기 전에 `:` 가 든 원래 이름을 거부하도록 고쳤다.
 - **클라우드 세션의 제약**(로컬 CLI 에는 없음): 릴리스를 만들 수 없었고, 사용자가 요청하지 않은 외부 모드(Sodium·Iris)를 받아 실행하는 것은 권한 단계에서 거부됐다.
 
 ## 6. 버전 기록
@@ -125,6 +152,7 @@ Claude Code 클라우드 세션에서 만든 작업을 로컬(Claude Code CLI)�
 | 1.2.0 | 깨끗한 메뉴 배경, HUD 박스 선택, 채팅 시간, 무한 채팅, 스크린샷 [복사] 버튼, HUD 를 채팅 앞에 / 런처: 모드 업데이트 확인·교체 |
 | 1.2.1 | 포션 효과 HUD 에 효과 아이콘, 바닐라 효과 아이콘 숨기기 옵션 |
 | 1.2.2 | 줌하는 동안 손을 화면 아래로 내림 (기본 켜짐) |
+| 1.3.0 (릴리스 전) | 런처: Microsoft 로그인(로그인 유지, 로그아웃), 공식 런처 없이 게임 바로 실행(게임 파일과 Java 21 자동 받기, 해시 검증), 설정의 "게임 실행 방식", Windows 에서 드러난 테스트 2건 수정. 모드 코드는 그대로(번호만 맞춤) |
 
 ## 7. 로컬에서 시작하기
 

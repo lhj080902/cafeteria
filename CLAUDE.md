@@ -10,7 +10,7 @@ Minecraft **1.21.4 (Fabric)** 용 PvP 클라이언트 모드와 Windows 런처. 
 | 폴더 | 내용 |
 | --- | --- |
 | `mod/` | Cafeteria Client – Fabric 모드 (Java 21, Mojang 공식 매핑, Mixin + MixinExtras) |
-| `launcher/` | Cafeteria 런처 – Electron. 공식 Minecraft 런처에 프로필을 등록하고 모드를 관리 |
+| `launcher/` | Cafeteria 런처 – Electron. Microsoft 로그인, 게임 파일 받기와 게임 바로 실행(Windows x64, 공식 Minecraft 런처 불필요), 모드 관리. 설정에서 공식 런처에 프로필을 등록하고 여는 예전 방식도 고를 수 있음 |
 | `branding/`, `tools/` | 아이콘과 아이콘 생성 스크립트 |
 | `docs/` | 인수인계 문서, README 용 스크린샷 |
 
@@ -47,6 +47,8 @@ npm run build:win       # dist/ 에 Setup.exe, zip, latest.yml, .blockmap
 - **설정 id 를 바꾸면 저장된 값이 버려진다** (`config/cafeteria.json` 은 id 로 읽는다). 기본값을 모든 사용자에게 새로 적용하려는 경우가 아니면 id 를 바꾸지 않는다.
 - **번역 키**는 `ko_kr.json` 과 `en_us.json` 에 항상 같이 넣는다. 모듈은 `cafeteria.module.<id>`(+`.desc`), 설정은 `cafeteria.setting.<id>`, 선택지는 `cafeteria.mode.<값>`.
 - **런처 보안 규칙**: 화면(renderer)은 `preload.js` 에 노출한 함수만 쓴다. 다운로드는 `constants.js` 의 `DOWNLOAD_HOSTS` 에 있는 곳에서만, 해시 검증 후에 받는다. CurseForge API 키 값은 화면으로 넘기지 않는다. 사용자에게 비밀 값을 채팅에 붙여 넣으라고 하지 않는다.
+- **로그인·게임 실행 보안 규칙**: 토큰(`access_token`, `refresh_token`, Xbox 토큰)은 메인 프로세스 밖으로 나가지 않는다 (화면, 로그, 오류 `details` 모두). 실행 인수 전체는 기록하지 않는다 (`--accessToken` 이 들어 있다). 게임 파일은 `constants.js` 에 고정한 해시에서 이어지는 sha1 로 검증한 것만 쓴다.
+- **Minecraft·Fabric 로더·Java 버전을 올릴 때**는 `constants.js` 의 `MINECRAFT_VERSION_JSON`, `JAVA_RUNTIME`, `FABRIC`(Fabric 라이브러리 8개의 이름과 sha1 포함)을 같이 바꾸고 `constants.test.js` 로 확인한다.
 - **버전을 올릴 때 고칠 곳**: `mod/gradle.properties`(`mod_version`), `launcher/package.json` 과 `package-lock.json`(맨 위 두 군데), `launcher/src/main/constants.js`(`USER_AGENT`), `launcher/test/unit/http.test.js`, `README.md` 의 파일 이름.
 - **electron-builder 버전은 고정**돼 있다. `scripts/build-win.js` 가 내부 모듈을 건드려 Wine 없이 설치 파일을 만들기 때문이다. 올리려면 빌드 스크립트를 함께 확인한다.
 - **Loom 은 1.13.x** 를 쓴다. 더 새 Loom 은 Java 25 를 요구한다.
