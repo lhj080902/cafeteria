@@ -87,6 +87,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testHudAboveChat(context);
 			testScreenshotCopy(context, input);
 			testHudEditor(context, input);
+			testHudResizeHandles(context);
 			testHudBoxSelection(context, input);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
@@ -1208,6 +1209,135 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		});
 	}
 
+	/** HUD 위치 편집: 꼭짓점 손잡이를 끌어 크기를 1% 단위로 바꾼다. 반대쪽 꼭짓점은 제자리에 있다. */
+	private static void testHudResizeHandles(ClientGameTestContext context) {
+		// 배율 계산: 고정된 꼭짓점에서의 가로·세로 거리 중 큰 쪽 비율을 따르고, 화면 여유와 범위를 넘지 않는다.
+		check(exactly(HudEditScreen.resizeScale(30, 5, 20, 10, 1000, 1000, 0.5, 2.0), 1.5), "가로가 더 긴 끌기의 배율이 다릅니다");
+		check(exactly(HudEditScreen.resizeScale(1, 1, 20, 10, 1000, 1000, 0.5, 2.0), 0.5), "최소 배율 아래로 내려갔습니다");
+		check(exactly(HudEditScreen.resizeScale(500, 500, 20, 10, 1000, 1000, 0.5, 2.0), 2.0), "최대 배율을 넘었습니다");
+		check(exactly(HudEditScreen.resizeScale(500, 500, 20, 10, 30, 1000, 0.5, 2.0), 1.5), "화면 여유보다 크게 커졌습니다");
+		check(exactly(HudEditScreen.resizeScale(-40, -40, 20, 10, 1000, 1000, 0.5, 2.0), 0.5), "꼭짓점을 넘겨 끌었을 때 최소 배율이 아닙니다");
+
+		context.setScreen(() -> new HudEditScreen(null));
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.FPS || element == Modules.CPS);
+				element.scale.reset();
+			}
+
+			Modules.FPS.setPosition(minecraft, 100, 100, minecraft.screen.width, minecraft.screen.height);
+			Modules.CPS.setPosition(minecraft, 300, 150, minecraft.screen.width, minecraft.screen.height);
+		});
+		int screenWidth = context.computeOnClient(minecraft -> minecraft.screen.width);
+		int screenHeight = context.computeOnClient(minecraft -> minecraft.screen.height);
+		int w = context.computeOnClient(Modules.FPS::width);
+		int h = context.computeOnClient(Modules.FPS::height);
+
+		// 1) 오른쪽 아래 손잡이를 1.37배 자리로 끈다: 배율이 1% 단위로 따라오고 왼쪽 위는 제자리.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(100 + w, 100 + h, 0);
+			minecraft.screen.mouseDragged(100 + w * 1.37, 100 + h * 1.37, 0, 0, 0);
+		});
+		check(context.computeOnClient(minecraft -> ((HudEditScreen) minecraft.screen).isResizing()), "손잡이를 끄는 중인데 크기 조절 상태가 아닙니다");
+		context.takeScreenshot("hud-edit-resize-handle");
+		context.runOnClient(minecraft -> minecraft.screen.mouseReleased(100 + w * 1.37, 100 + h * 1.37, 0));
+		check(!context.computeOnClient(minecraft -> ((HudEditScreen) minecraft.screen).isResizing()), "손잡이를 놓았는데 크기 조절 상태가 남았습니다");
+		double grown = Modules.FPS.scale.get();
+		check(Math.abs(grown - 1.37) < 0.011, "꼭짓점을 끈 만큼 커지지 않았습니다: " + grown);
+		check(Math.abs(grown * 100 - Math.round(grown * 100)) < 1.0e-6, "크기가 1% 단위가 아닙니다: " + grown);
+		int[] grownAt = position(context, Modules.FPS);
+		check(grownAt[0] == 100 && grownAt[1] == 100, "오른쪽 아래를 끌었는데 왼쪽 위가 움직였습니다: " + grownAt[0] + ", " + grownAt[1]);
+
+		// 2) 왼쪽 위 손잡이를 안쪽으로 끈다: 작아지고 오른쪽 아래는 제자리.
+		int right = 100 + context.computeOnClient(Modules.FPS::width);
+		int bottom = 100 + context.computeOnClient(Modules.FPS::height);
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(100, 100, 0);
+			minecraft.screen.mouseDragged(100 + w * 0.2, 100 + h * 0.2, 0, 0, 0);
+			minecraft.screen.mouseReleased(100 + w * 0.2, 100 + h * 0.2, 0);
+		});
+		double shrunk = Modules.FPS.scale.get();
+		check(shrunk < grown - 0.1, "왼쪽 위를 안쪽으로 끌었는데 작아지지 않았습니다: " + shrunk);
+		int[] shrunkAt = position(context, Modules.FPS);
+		int shrunkRight = shrunkAt[0] + context.computeOnClient(Modules.FPS::width);
+		int shrunkBottom = shrunkAt[1] + context.computeOnClient(Modules.FPS::height);
+		check(Math.abs(shrunkRight - right) <= 1 && Math.abs(shrunkBottom - bottom) <= 1,
+			"왼쪽 위를 끌었는데 오른쪽 아래가 움직였습니다: " + shrunkRight + ", " + shrunkBottom + " (기대 " + right + ", " + bottom + ")");
+
+		// 3) 화면 밖까지 끌어도 범위(50~200%)와 화면 안에 머문다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(shrunkRight, shrunkBottom, 0);
+			minecraft.screen.mouseDragged(9999, 9999, 0, 0, 0);
+			minecraft.screen.mouseReleased(9999, 9999, 0);
+		});
+		double largest = Modules.FPS.scale.get();
+		int[] largestAt = position(context, Modules.FPS);
+		int largestWidth = context.computeOnClient(Modules.FPS::width);
+		int largestHeight = context.computeOnClient(Modules.FPS::height);
+		check(largest <= 2.0 + 1.0e-9, "최대 크기를 넘었습니다: " + largest);
+		check(largestAt[0] == shrunkAt[0] && largestAt[1] == shrunkAt[1], "끝까지 키웠는데 왼쪽 위가 움직였습니다");
+		check(largestAt[0] + largestWidth <= screenWidth && largestAt[1] + largestHeight <= screenHeight, "끌어서 화면 밖으로 커졌습니다");
+
+		if ((screenWidth - shrunkAt[0]) >= w * 2 && (screenHeight - shrunkAt[1]) >= h * 2) {
+			check(exactly(largest, 2.0), "자리가 넉넉한데 최대 크기까지 커지지 않았습니다: " + largest);
+		}
+
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(largestAt[0] + largestWidth, largestAt[1] + largestHeight, 0);
+			minecraft.screen.mouseDragged(-500, -500, 0, 0, 0);
+			minecraft.screen.mouseReleased(-500, -500, 0);
+		});
+		check(exactly(Modules.FPS.scale.get(), 0.5), "끝까지 줄였는데 최소 크기가 아닙니다: " + Modules.FPS.scale.get());
+
+		// 4) 손잡이가 아닌 가운데를 끌면 예전처럼 이동하고 크기는 그대로다.
+		context.runOnClient(minecraft -> {
+			Modules.FPS.scale.reset();
+			Modules.FPS.setPosition(minecraft, 100, 100, minecraft.screen.width, minecraft.screen.height);
+			minecraft.screen.mouseClicked(100 + w / 2.0, 100 + h / 2.0, 0);
+			minecraft.screen.mouseDragged(130 + w / 2.0, 120 + h / 2.0, 0, 0, 0);
+			minecraft.screen.mouseReleased(130 + w / 2.0, 120 + h / 2.0, 0);
+		});
+		int[] dragged = position(context, Modules.FPS);
+		check(dragged[0] == 130 && dragged[1] == 120, "가운데를 끌었는데 이동하지 않았습니다: " + dragged[0] + ", " + dragged[1]);
+		check(exactly(Modules.FPS.scale.get(), 1.0), "가운데를 끌었는데 크기가 바뀌었습니다: " + Modules.FPS.scale.get());
+
+		// 5) 여러 개를 선택한 상태에서 손잡이를 끌면 잡은 요소만 바뀌고 선택은 그대로다.
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(90, 90, 0);
+			minecraft.screen.mouseDragged(380, 200, 0, 0, 0);
+			minecraft.screen.mouseReleased(380, 200, 0);
+		});
+		check(selection(context).equals(Set.of(Modules.FPS, Modules.CPS)), "박스 선택 결과가 다릅니다: " + names(selection(context)));
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(130 + w, 120 + h, 0);
+			minecraft.screen.mouseDragged(130 + w * 1.5, 120 + h * 1.5, 0, 0, 0);
+			minecraft.screen.mouseReleased(130 + w * 1.5, 120 + h * 1.5, 0);
+		});
+		check(Math.abs(Modules.FPS.scale.get() - 1.5) < 0.011, "선택 묶음 안의 요소가 손잡이로 커지지 않았습니다: " + Modules.FPS.scale.get());
+		check(exactly(Modules.CPS.scale.get(), 1.0), "잡지 않은 요소의 크기가 바뀌었습니다: " + Modules.CPS.scale.get());
+		int[] other = position(context, Modules.CPS);
+		check(other[0] == 300 && other[1] == 150, "잡지 않은 요소가 움직였습니다: " + other[0] + ", " + other[1]);
+		check(selection(context).size() == 2, "손잡이를 끈 뒤에 선택이 바뀌었습니다: " + names(selection(context)));
+
+		// 6) 설정 화면에 보이는 값은 소수 둘째 자리까지.
+		context.runOnClient(minecraft -> Modules.FPS.scale.set(1.25));
+		check(Modules.FPS.scale.format().equals("1.25x"), "크기 표시가 다릅니다: " + Modules.FPS.scale.format());
+
+		context.runOnClient(minecraft -> {
+			Modules.FPS.scale.reset();
+			Modules.CPS.scale.reset();
+		});
+		context.clickScreenButton("cafeteria.hud_edit.reset");
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		// 기본 상태로 되돌린다: 좌표·콤보·리치만 꺼져 있고 나머지는 켜져 있다.
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+			}
+		});
+	}
+
 	private static void testFullbright(ClientGameTestContext context, TestInput input, TestServerContext server) {
 		server.runCommand("time set midnight");
 		context.waitTicks(40);
@@ -1319,6 +1449,11 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 	private static boolean near(double actual, double expected) {
 		return Math.abs(actual - expected) < 0.05;
+	}
+
+	/** 계산 오차만 허용하는 비교 (1% 단위 크기처럼 near 보다 촘촘해야 하는 값). */
+	private static boolean exactly(double actual, double expected) {
+		return Math.abs(actual - expected) < 1.0e-6;
 	}
 
 	private static void check(boolean condition, String message) {

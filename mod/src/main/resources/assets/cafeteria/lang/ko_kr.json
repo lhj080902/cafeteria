@@ -59,7 +59,7 @@
 	"cafeteria.message.fullbright_off": "풀브라이트: 꺼짐",
 	"cafeteria.screen.section.features": "기능",
 	"cafeteria.screen.section.hud": "HUD",
-	"cafeteria.hud_edit.hint2": "방향키: 1칸씩 이동 · 휠: 크기 · 우클릭: 설정",
+	"cafeteria.hud_edit.hint2": "꼭짓점 끌기·휠: 크기 · 방향키: 1칸씩 이동 · 우클릭: 설정",
 	"cafeteria.module.low_fire": "낮은 화염",
 	"cafeteria.module.low_fire.desc": "불 붙었을 때 시야 확보",
 	"cafeteria.module.no_tutorial": "튜토리얼 끄기",

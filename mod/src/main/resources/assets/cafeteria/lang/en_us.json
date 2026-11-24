@@ -59,7 +59,7 @@
 	"cafeteria.message.fullbright_off": "Fullbright: OFF",
 	"cafeteria.screen.section.features": "Features",
 	"cafeteria.screen.section.hud": "HUD",
-	"cafeteria.hud_edit.hint2": "Arrow keys: nudge · Wheel: scale · Right click: settings",
+	"cafeteria.hud_edit.hint2": "Corner drag / wheel: scale · Arrow keys: nudge · Right click: settings",
 	"cafeteria.module.low_fire": "Low Fire",
 	"cafeteria.module.low_fire.desc": "Lower the fire overlay",
 	"cafeteria.module.no_tutorial": "No Tutorial",

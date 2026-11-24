@@ -25,7 +25,8 @@ import java.util.Set;
  *   <li>빈 곳을 끌기: 박스를 그려서 닿은 요소를 한꺼번에 선택. 선택한 요소들은 함께 움직인다.</li>
  *   <li>Ctrl+클릭: 선택에 추가/해제. Ctrl+A: 전체 선택.</li>
  *   <li>방향키: 선택한 요소를 1픽셀씩 이동 (Shift 와 함께 누르면 10픽셀).</li>
- *   <li>휠: 크기 조절. 오른쪽 클릭: 그 요소의 설정 열기.</li>
+ *   <li>꼭짓점 손잡이를 끌기: 크기 조절 (1% 단위). 반대쪽 꼭짓점은 제자리에 있다.</li>
+ *   <li>휠: 크기 조절 (10% 단위). 오른쪽 클릭: 그 요소의 설정 열기.</li>
  * </ul>
  */
 public class HudEditScreen extends Screen {
@@ -33,6 +34,12 @@ public class HudEditScreen extends Screen {
 	private static final int SNAP_DISTANCE = 6;
 	private static final int NO_GUIDE = Integer.MIN_VALUE;
 	private static final int BOX_FILL = 0x33F2A65A;
+	/** 꼭짓점 손잡이의 한 변(픽셀). 테두리의 꼭짓점을 가운데에 두고 그리며, 그려진 네모가 곧 누를 수 있는 영역이다. */
+	private static final int HANDLE_SIZE = 5;
+	/** 꼭짓점의 방향 (가로, 세로). -1 은 왼쪽·위, 1 은 오른쪽·아래. */
+	private static final int[][] CORNERS = {{-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
+	/** 옮길 수 없는 요소는 왼쪽 아래가 고정이라 오른쪽 위 손잡이만 있다. */
+	private static final int[][] TOP_RIGHT_CORNER = {{1, -1}};
 
 	private final Screen parent;
 	/** 선택한 요소들 (선택한 순서). */
@@ -47,6 +54,18 @@ public class HudEditScreen extends Screen {
 	private boolean dragMoved;
 	/** 여러 개 선택한 상태에서 그중 하나를 끌지 않고 눌렀다 떼면 그 요소만 선택한다. */
 	private boolean collapseOnRelease;
+
+	/** 꼭짓점 손잡이를 잡고 크기를 바꾸는 요소. */
+	private HudElement resizing;
+	/** 크기를 바꾸는 동안 제자리에 있는 반대쪽 꼭짓점. */
+	private int resizeFixedX;
+	private int resizeFixedY;
+	/** 고정된 꼭짓점에서 잡은 꼭짓점 쪽으로의 방향 (1 또는 -1). */
+	private int resizeDirectionX;
+	private int resizeDirectionY;
+	/** 누른 순간 마우스와 꼭짓점이 어긋난 만큼. 끄는 동안 이만큼을 빼서 손잡이가 튀지 않게 한다. */
+	private double resizeGrabX;
+	private double resizeGrabY;
 
 	/** 박스 선택 중인지와 박스의 두 모서리. */
 	private boolean boxSelecting;
@@ -81,12 +100,31 @@ public class HudEditScreen extends Screen {
 	public void removed() {
 		HudElement.setEditing(false);
 		dragging = null;
+		resizing = null;
 		boxSelecting = false;
 	}
 
 	/** 지금 선택돼 있는 요소들 (선택한 순서). */
 	public List<HudElement> selection() {
 		return List.copyOf(selection);
+	}
+
+	/** 꼭짓점 손잡이를 끄는 중인지. */
+	public boolean isResizing() {
+		return resizing != null;
+	}
+
+	/**
+	 * 꼭짓점을 끈 거리로 배율을 구한다. 거리는 고정된 반대쪽 꼭짓점에서 잰 것이고 끄는 방향이 양수다.
+	 * 가로·세로 중 더 많이 끈 쪽을 따르고(비율 유지), 화면 여유(room)와 설정 범위를 넘지 않는다. 결과는 1% 단위.
+	 */
+	public static double resizeScale(double distanceX, double distanceY, int baseWidth, int baseHeight, double roomX, double roomY, double min, double max) {
+		int baseX = Math.max(1, baseWidth);
+		int baseY = Math.max(1, baseHeight);
+		double wanted = Math.round(Math.max(distanceX / baseX, distanceY / baseY) * 100.0) / 100.0;
+		// 여유는 1% 단위로 내려서, 반올림 때문에 화면 밖으로 1픽셀 나가는 일이 없게 한다.
+		double room = Math.floor(Math.min(roomX / baseX, roomY / baseY) * 100.0 + 1.0e-9) / 100.0;
+		return Math.max(min, Math.min(max, Math.min(wanted, room)));
 	}
 
 	@Override
@@ -102,12 +140,24 @@ public class HudEditScreen extends Screen {
 		super.render(graphics, mouseX, mouseY, partialTick);
 		renderHint(graphics);
 		selection.removeIf(element -> !element.isEnabled());
-		boolean busy = dragging != null || boxSelecting;
+		boolean busy = dragging != null || boxSelecting || resizing != null;
+		List<HudElement> elements = enabledElements();
 
-		for (HudElement element : enabledElements()) {
+		for (HudElement element : elements) {
 			element.render(graphics, minecraft);
 			int color = selection.contains(element) ? CafeteriaScreen.ACCENT : contains(element, mouseX, mouseY) && !busy ? 0xFFFFFFFF : 0x80FFFFFF;
 			graphics.renderOutline(element.x(minecraft, width) - 1, element.y(minecraft, height) - 1, element.width(minecraft) + 2, element.height(minecraft) + 2, color);
+		}
+
+		// 손잡이는 다른 요소에 가리지 않게 요소를 모두 그린 뒤에 그린다.
+		Handle hovered = busy ? null : handleAt(mouseX, mouseY);
+
+		for (HudElement element : elements) {
+			boolean pointed = !busy && (contains(element, mouseX, mouseY) || hovered != null && hovered.element() == element);
+
+			if (element == resizing || resizing == null && (selection.contains(element) || pointed)) {
+				renderHandles(graphics, element, hovered);
+			}
 		}
 
 		if (dragging != null) {
@@ -130,6 +180,17 @@ public class HudEditScreen extends Screen {
 
 		if (!selection.isEmpty()) {
 			renderSelectionInfo(graphics);
+		}
+	}
+
+	private void renderHandles(GuiGraphics graphics, HudElement element, Handle hovered) {
+		for (int[] corner : corners(element)) {
+			int left = handleLeft(element, corner[0]);
+			int top = handleTop(element, corner[1]);
+			boolean active = element == resizing ? corner[0] == resizeDirectionX && corner[1] == resizeDirectionY
+				: hovered != null && hovered.element() == element && hovered.directionX() == corner[0] && hovered.directionY() == corner[1];
+			graphics.fill(left, top, left + HANDLE_SIZE, top + HANDLE_SIZE, 0xFF000000);
+			graphics.fill(left + 1, top + 1, left + HANDLE_SIZE - 1, top + HANDLE_SIZE - 1, active ? CafeteriaScreen.ACCENT : 0xFFFFFFFF);
 		}
 	}
 
@@ -156,11 +217,13 @@ public class HudEditScreen extends Screen {
 	 * 하나를 골랐으면 이름·좌표·크기, 여러 개면 개수.
 	 */
 	private void renderSelectionInfo(GuiGraphics graphics) {
+		// 크기를 바꾸는 동안에는 여러 개를 선택했더라도 잡은 요소의 크기를 보여 준다.
+		Set<HudElement> shown = resizing != null ? Set.of(resizing) : selection;
 		int left = Integer.MAX_VALUE;
 		int top = Integer.MAX_VALUE;
 		int bottom = Integer.MIN_VALUE;
 
-		for (HudElement element : selection) {
+		for (HudElement element : shown) {
 			left = Math.min(left, element.x(minecraft, width));
 			top = Math.min(top, element.y(minecraft, height));
 			bottom = Math.max(bottom, element.y(minecraft, height) + element.height(minecraft));
@@ -168,8 +231,8 @@ public class HudEditScreen extends Screen {
 
 		String info;
 
-		if (selection.size() == 1) {
-			HudElement only = selection.iterator().next();
+		if (shown.size() == 1) {
+			HudElement only = shown.iterator().next();
 			info = only.name().getString() + "  " + left + ", " + top + "  " + Math.round(only.scale.get() * 100.0) + "%";
 		} else {
 			info = Component.translatable("cafeteria.hud_edit.selected_count", selection.size()).getString();
@@ -218,10 +281,65 @@ public class HudEditScreen extends Screen {
 		selection.add(element);
 	}
 
+	/** 꼭짓점 손잡이 하나: 어느 요소의 어느 쪽 꼭짓점인지. */
+	private record Handle(HudElement element, int directionX, int directionY) {
+	}
+
+	private static int[][] corners(HudElement element) {
+		return element.movable() ? CORNERS : TOP_RIGHT_CORNER;
+	}
+
+	/** 손잡이 네모의 왼쪽 좌표. 테두리(요소보다 1픽셀 바깥)의 꼭짓점이 네모 가운데에 온다. */
+	private int handleLeft(HudElement element, int directionX) {
+		int x = element.x(minecraft, width);
+		return (directionX > 0 ? x + element.width(minecraft) : x - 1) - HANDLE_SIZE / 2;
+	}
+
+	private int handleTop(HudElement element, int directionY) {
+		int y = element.y(minecraft, height);
+		return (directionY > 0 ? y + element.height(minecraft) : y - 1) - HANDLE_SIZE / 2;
+	}
+
+	/** 마우스 아래의 손잡이. 선택한 요소의 손잡이가 먼저고, 그다음은 위에 그려진 요소 순서다. */
+	private Handle handleAt(double mouseX, double mouseY) {
+		List<HudElement> elements = enabledElements();
+
+		for (boolean selected : new boolean[] {true, false}) {
+			for (int i = elements.size() - 1; i >= 0; i--) {
+				HudElement element = elements.get(i);
+
+				if (selection.contains(element) != selected) {
+					continue;
+				}
+
+				for (int[] corner : corners(element)) {
+					int left = handleLeft(element, corner[0]);
+					int top = handleTop(element, corner[1]);
+
+					if (mouseX >= left && mouseX < left + HANDLE_SIZE && mouseY >= top && mouseY < top + HANDLE_SIZE) {
+						return new Handle(element, corner[0], corner[1]);
+					}
+				}
+			}
+		}
+
+		return null;
+	}
+
 	@Override
 	public boolean mouseClicked(double mouseX, double mouseY, int button) {
 		if (super.mouseClicked(mouseX, mouseY, button)) {
 			return true;
+		}
+
+		if (button == 0) {
+			// 손잡이는 요소 가장자리에 걸쳐 있어서, 이동이나 박스 선택보다 먼저 확인한다.
+			Handle handle = handleAt(mouseX, mouseY);
+
+			if (handle != null) {
+				startResize(handle, mouseX, mouseY);
+				return true;
+			}
 		}
 
 		HudElement element = elementAt(mouseX, mouseY);
@@ -258,6 +376,40 @@ public class HudEditScreen extends Screen {
 		}
 
 		return false;
+	}
+
+	/** 손잡이를 잡는다. 선택 밖의 요소면 그것만 선택하고, 선택 안의 요소면 선택은 그대로 두고 그 요소만 바꾼다. */
+	private void startResize(Handle handle, double mouseX, double mouseY) {
+		HudElement element = handle.element();
+
+		if (!selection.contains(element)) {
+			selectOnly(element);
+		}
+
+		int left = element.x(minecraft, width);
+		int top = element.y(minecraft, height);
+		int right = left + element.width(minecraft);
+		int bottom = top + element.height(minecraft);
+		resizing = element;
+		resizeDirectionX = handle.directionX();
+		resizeDirectionY = handle.directionY();
+		resizeFixedX = resizeDirectionX > 0 ? left : right;
+		resizeFixedY = resizeDirectionY > 0 ? top : bottom;
+		resizeGrabX = mouseX - (resizeDirectionX > 0 ? right : left);
+		resizeGrabY = mouseY - (resizeDirectionY > 0 ? bottom : top);
+	}
+
+	/** 잡은 꼭짓점이 마우스를 따라오도록 크기를 바꾸고, 반대쪽 꼭짓점이 제자리에 있게 위치를 맞춘다. */
+	private void resizeTo(double mouseX, double mouseY) {
+		double distanceX = (mouseX - resizeGrabX - resizeFixedX) * resizeDirectionX;
+		double distanceY = (mouseY - resizeGrabY - resizeFixedY) * resizeDirectionY;
+		double roomX = resizeDirectionX > 0 ? width - resizeFixedX : resizeFixedX;
+		double roomY = resizeDirectionY > 0 ? height - resizeFixedY : resizeFixedY;
+		resizing.scale.set(resizeScale(distanceX, distanceY, resizing.baseWidth(minecraft), resizing.baseHeight(minecraft),
+			roomX, roomY, resizing.scale.min(), resizing.scale.max()));
+		int x = resizeDirectionX > 0 ? resizeFixedX : resizeFixedX - resizing.width(minecraft);
+		int y = resizeDirectionY > 0 ? resizeFixedY : resizeFixedY - resizing.height(minecraft);
+		resizing.setPosition(minecraft, x, y, width, height);
 	}
 
 	private void startBoxSelection(double mouseX, double mouseY) {
@@ -322,6 +474,11 @@ public class HudEditScreen extends Screen {
 	public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
 		if (button != 0) {
 			return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+		}
+
+		if (resizing != null) {
+			resizeTo(mouseX, mouseY);
+			return true;
 		}
 
 		if (boxSelecting) {
@@ -430,6 +587,11 @@ public class HudEditScreen extends Screen {
 
 	@Override
 	public boolean mouseReleased(double mouseX, double mouseY, int button) {
+		if (button == 0 && resizing != null) {
+			resizing = null;
+			return true;
+		}
+
 		if (button == 0 && boxSelecting) {
 			boxSelecting = false;
 			boxBase.clear();
@@ -465,11 +627,7 @@ public class HudEditScreen extends Screen {
 		}
 
 		for (HudElement element : selection) {
-			// 크기를 바꿔도 요소의 왼쪽 위 모서리는 제자리에 있게 한다.
-			int x = element.x(minecraft, width);
-			int y = element.y(minecraft, height);
-			element.scale.set(element.scale.get() + Math.signum(scrollY) * 0.1);
-			element.setPosition(minecraft, x, y, width, height);
+			element.rescale(minecraft, element.scale.get() + Math.signum(scrollY) * 0.1, width, height);
 		}
 
 		return true;
@@ -483,7 +641,7 @@ public class HudEditScreen extends Screen {
 			return true;
 		}
 
-		if (!selection.isEmpty() && dragging == null) {
+		if (!selection.isEmpty() && dragging == null && resizing == null) {
 			int step = hasShiftDown() ? 10 : 1;
 			int deltaX = keyCode == GLFW.GLFW_KEY_LEFT ? -step : keyCode == GLFW.GLFW_KEY_RIGHT ? step : 0;
 			int deltaY = keyCode == GLFW.GLFW_KEY_UP ? -step : keyCode == GLFW.GLFW_KEY_DOWN ? step : 0;

@@ -13,7 +13,8 @@ import net.minecraft.util.Mth;
  * 창 크기나 GUI 배율이 바뀌어도 화면 밖으로 나가지 않는다.
  */
 public abstract class HudElement extends Module {
-	public final NumberSetting scale = add(new NumberSetting("scale", 1.0, 0.5, 2.0, 0.1, "x"));
+	/** 크기. 1% 단위 (편집 화면에서 꼭짓점을 끌면 이 단위로 바뀐다). */
+	public final NumberSetting scale = add(new NumberSetting("scale", 1.0, 0.5, 2.0, 0.01, "x"));
 
 	/** HUD 위치 편집 화면이 요소를 그리는 동안 true. 평소에는 비어 있는 요소도 이때는 예시 내용을 보여 준다. */
 	private static boolean editing;
@@ -51,6 +52,28 @@ public abstract class HudElement extends Module {
 
 	/** (0, 0)을 왼쪽 위로 해서 내용을 그린다. 위치·배율은 render() 가 이미 적용해 둔다. */
 	protected abstract void draw(GuiGraphics graphics, Minecraft minecraft);
+
+	/** 배율을 곱하기 전의 크기. 편집 화면이 꼭짓점을 끈 거리로 배율을 구할 때 쓴다. */
+	public int baseWidth(Minecraft minecraft) {
+		return contentWidth(minecraft);
+	}
+
+	public int baseHeight(Minecraft minecraft) {
+		return contentHeight(minecraft);
+	}
+
+	/** 편집 화면에서 옮길 수 있는지. 채팅처럼 자리가 정해진 요소는 false. */
+	public boolean movable() {
+		return true;
+	}
+
+	/** 크기를 바꾼다. 요소의 왼쪽 위 모서리는 제자리에 둔다. (편집 화면의 휠) */
+	public void rescale(Minecraft minecraft, double value, int screenWidth, int screenHeight) {
+		int x = x(minecraft, screenWidth);
+		int y = y(minecraft, screenHeight);
+		scale.set(value);
+		setPosition(minecraft, x, y, screenWidth, screenHeight);
+	}
 
 	public int width(Minecraft minecraft) {
 		return Math.max(1, Math.round(contentWidth(minecraft) * scale.asFloat()));

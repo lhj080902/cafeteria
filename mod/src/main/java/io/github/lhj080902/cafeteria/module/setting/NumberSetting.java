@@ -42,7 +42,8 @@ public class NumberSetting extends Setting<Double> {
 	}
 
 	public String format() {
-		String number = step >= 1.0 ? String.valueOf(Math.round(get())) : String.format(Locale.ROOT, "%.1f", get());
+		// 단위가 0.1 보다 작으면(HUD 크기의 1% 단위) 소수 둘째 자리까지 보여 준다.
+		String number = step >= 1.0 ? String.valueOf(Math.round(get())) : String.format(Locale.ROOT, step < 0.1 ? "%.2f" : "%.1f", get());
 		return number + suffix;
 	}
 
