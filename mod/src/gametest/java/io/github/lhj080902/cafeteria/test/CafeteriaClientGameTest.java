@@ -102,7 +102,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testChatScale(context, input);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
-			testNoFog(context, server);
+			testNoFog(context, input, server);
 			testConfig(context);
 		}
 
@@ -2252,7 +2252,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	 * 끄면 벽이 안개에 묻히고, 켜면 공기 중에서 본 색 그대로여야 한다 (물속 무늬가 남아 있으면 파란색이 10 가까이 올라간다).
 	 * 통로를 바다 랜턴으로 만들어 블록 밝기가 최대로 고정되므로 공기·물·용암 속에서 벽의 밝기가 같다.
 	 */
-	private static void testNoFog(ClientGameTestContext context, TestServerContext server) {
+	private static void testNoFog(ClientGameTestContext context, TestInput input, TestServerContext server) {
 		check(!Modules.NO_FOG.isEnabled(), "안개 제거는 기본으로 꺼져 있어야 합니다");
 		String here = "execute at @a run ";
 		String channel = "fill ~ ~0.5 ~-26 ~ ~2.5 ~ minecraft:";
@@ -2282,7 +2282,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		int[] lavaFog = centerColor(context, "fog-lava-normal");
 		check(lavaFog[0] > lavaFog[1] + 60, "용암 속인데 벽이 안개에 묻히지 않았습니다: " + Arrays.toString(lavaFog));
 		context.runOnClient(minecraft -> Modules.NO_FOG.setEnabled(true));
-		context.waitTicks(3);
+		nudgeCamera(context, input);
 		int[] lavaClear = centerColor(context, "fog-lava-clear");
 		check(sameColor(lavaClear, wall), "용암 속에서 벽이 보이지 않습니다: " + Arrays.toString(lavaClear) + " / 공기 중 " + Arrays.toString(wall));
 		context.runOnClient(minecraft -> Modules.NO_FOG.lava.set(false));
@@ -2302,7 +2302,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		int[] waterFog = centerColor(context, "fog-water-normal");
 		check(waterFog[2] > waterFog[1] + 20, "물속인데 벽이 안개에 묻히지 않았습니다: " + Arrays.toString(waterFog));
 		context.runOnClient(minecraft -> Modules.NO_FOG.setEnabled(true));
-		context.waitTicks(3);
+		nudgeCamera(context, input);
 		int[] waterClear = centerColor(context, "fog-water-clear");
 		check(isLime(waterClear), "물속에서 벽이 보이지 않습니다: " + Arrays.toString(waterClear));
 		check(sameColor(waterClear, wall), "물속 무늬가 남아 있습니다: " + Arrays.toString(waterClear) + " / 공기 중 " + Arrays.toString(wall));
@@ -2361,9 +2361,23 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		return new int[] {sum[0] / 25, sum[1] / 25, sum[2] / 25};
 	}
 
-	/** 안개 검사용 벽(연두색 콘크리트)의 색인지. 안개 색(주황, 파랑)이나 하늘색과는 겹치지 않는다. */
+	/**
+	 * 카메라를 아주 조금 돌렸다가 되돌린다. Sodium 은 카메라가 움직여야 그릴 청크 목록을 다시 만들어서,
+	 * 가만히 선 채로 안개만 걷히면 안개 밖에 있던 청크가 바로 나타나지 않는다 (0.6.13 에서 확인).
+	 */
+	private static void nudgeCamera(ClientGameTestContext context, TestInput input) {
+		input.moveCursor(1.0, 0.0);
+		context.waitTicks(2);
+		input.moveCursor(-1.0, 0.0);
+		context.waitTicks(8);
+	}
+
+	/**
+	 * 안개 검사용 벽(연두색 콘크리트)의 색인지. 통로 끝이라 모서리 그늘이 져서 [44, 79, 11] 쯤으로 보인다.
+	 * 안개 색(주황, 파랑)이나 하늘색과는 겹치지 않는다.
+	 */
 	private static boolean isLime(int[] color) {
-		return color[1] > color[0] + 30 && color[1] > color[2] + 60;
+		return color[1] > color[0] + 20 && color[1] > color[2] + 40;
 	}
 
 	private static boolean sameColor(int[] actual, int[] expected) {
