@@ -178,3 +178,66 @@ test('화면에 넘기는 값과 저장 파일에 토큰이 평문으로 들어�
     assert.ok(!text.includes(secret), secret);
   }
 });
+
+function deferred() {
+  let release;
+  const promise = new Promise((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+test('갱신 중에 로그아웃하면 갱신이 끝나도 로그인 상태로 되돌리지 않는다', async (t) => {
+  const gate = deferred();
+  const overrides = {
+    refreshTokens: async () => {
+      await gate.promise;
+      return { accessToken: 'MS2', refreshToken: 'R2' };
+    },
+  };
+  const { file, create } = setup(t, { overrides });
+  await (await create()).completeLogin('CODE');
+
+  const account = await create();
+  const pending = account.session();
+  const rejected = assert.rejects(pending, (error) => error instanceof LauncherError && error.code === 'LOGIN_REQUIRED');
+  await account.logout();
+  gate.release();
+  await rejected;
+
+  assert.deepEqual(account.publicView(), { loggedIn: false, name: '' });
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('갱신 중에 다시 로그인하면 새 계정이 유지되고, 이전 갱신의 만료 오류가 지우지 않는다', async (t) => {
+  for (const expire of [false, true]) {
+    const gate = deferred();
+    const overrides = {
+      refreshTokens: async () => {
+        await gate.promise;
+
+        if (expire) {
+          throw new LauncherError('LOGIN_EXPIRED', '로그인이 만료됐습니다. 다시 로그인해 주세요.');
+        }
+
+        return { accessToken: 'OLD2', refreshToken: 'ROLD2' };
+      },
+    };
+    const { file, auth, create } = setup(t, { overrides });
+    await (await create()).completeLogin('CODE');
+
+    const account = await create();
+    auth.redeemCode = async () => ({ accessToken: 'MSNEW', refreshToken: 'RNEW' });
+    auth.minecraftLogin = async (ms) => ({ accessToken: `MC-${ms}`, expiresAt: 1_000_000 + DAY, name: 'Alex', uuid: 'uuid-2', xuid: 'xuid-2' });
+
+    const pending = account.session();
+    const rejected = assert.rejects(pending, { code: 'LOGIN_REQUIRED' });
+    await account.completeLogin('CODE2');
+    gate.release();
+    await rejected;
+
+    assert.deepEqual(account.publicView(), { loggedIn: true, name: 'Alex' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { name: 'Alex', uuid: 'uuid-2', refreshToken: { encrypted: Buffer.from('enc:RNEW').toString('base64') } });
+    assert.equal((await account.session()).accessToken, 'MC-MSNEW');
+  }
+});

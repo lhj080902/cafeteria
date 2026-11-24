@@ -24,6 +24,8 @@ class AccountManager {
     this.account = null;
     this.minecraft = null;
     this.pending = null;
+    /** 로그아웃·다시 로그인할 때마다 올라간다. 진행 중이던 갱신이 그 사이 바뀐 계정을 덮어쓰지 않게 하는 용도. */
+    this.generation = 0;
   }
 
   async load() {
@@ -47,6 +49,7 @@ class AccountManager {
   async completeLogin(code) {
     const { accessToken, refreshToken } = await this.auth.redeemCode(code);
     const minecraft = await this.auth.minecraftLogin(accessToken, this.now());
+    this.generation += 1;
     await this.store(refreshToken, minecraft);
     return this.publicView();
   }
@@ -54,7 +57,7 @@ class AccountManager {
   /** 게임 실행에 쓸 유효한 세션. 만료가 가까우면 갱신하고, 동시에 여러 번 불러도 갱신은 한 번만 한다. */
   async session() {
     if (!this.account) {
-      throw new LauncherError('LOGIN_REQUIRED', 'Microsoft 계정으로 로그인해 주세요.');
+      throw loginRequired();
     }
 
     if (!this.minecraft || this.minecraft.expiresAt <= this.now() + REFRESH_MARGIN_MS) {
@@ -63,6 +66,10 @@ class AccountManager {
         this.pending = null;
       });
       await this.pending;
+    }
+
+    if (!this.minecraft) {
+      throw loginRequired();
     }
 
     const { accessToken, name, uuid, xuid } = this.minecraft;
@@ -75,11 +82,23 @@ class AccountManager {
   }
 
   async refresh() {
+    const generation = this.generation;
+
     try {
       const { accessToken, refreshToken } = await this.auth.refreshTokens(this.account.refreshToken);
       const minecraft = await this.auth.minecraftLogin(accessToken, this.now());
+
+      if (generation !== this.generation) {
+        throw loginRequired();
+      }
+
       await this.store(refreshToken, minecraft);
     } catch (error) {
+      if (generation !== this.generation) {
+        // 갱신하는 사이 계정이 바뀌었다. 이전 계정의 결과는 새 계정에 영향을 주지 않는다.
+        throw loginRequired();
+      }
+
       if (error && error.code === 'LOGIN_EXPIRED') {
         await this.clear();
       }
@@ -106,6 +125,7 @@ class AccountManager {
   }
 
   async clear() {
+    this.generation += 1;
     this.account = null;
     this.minecraft = null;
     await fsp.rm(this.file, { force: true });
@@ -124,6 +144,10 @@ class AccountManager {
       return '';
     }
   }
+}
+
+function loginRequired() {
+  return new LauncherError('LOGIN_REQUIRED', 'Microsoft 계정으로 로그인해 주세요.');
 }
 
 module.exports = { AccountManager, REFRESH_MARGIN_MS };
