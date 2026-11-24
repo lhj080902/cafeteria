@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { Writable } = require('node:stream');
 const { afterEach, test } = require('node:test');
 const http = require('../../src/main/http');
 const { fakeFetch, tempDir } = require('./helpers');
@@ -72,6 +73,72 @@ test('서버 오류와 연결 실패는 안내 오류로 바뀐다', async (t) =
     throw new Error('connect ECONNREFUSED');
   });
   await assert.rejects(http.getJson(URL_OK), { code: 'NETWORK' });
+});
+
+test('임시 파일(.part)을 열 수 없으면 WRITE_FAILED 로 실패하고 멈추지 않는다', async (t) => {
+  const directory = tempDir(t);
+  const destination = path.join(directory, 'mod.jar');
+  // 같은 이름의 폴더가 있으면 .part 파일을 열 수 없다.
+  fs.mkdirSync(`${destination}.part`);
+  http.setFetch(fakeFetch({ [URL_OK]: { body: BODY } }));
+
+  await assert.rejects(http.download(URL_OK, destination, { allowedHosts: HOSTS, hashes: { sha1: SHA1 } }), (error) => {
+    assert.equal(error.code, 'WRITE_FAILED');
+    assert.equal(error.message, '파일을 저장하지 못했습니다. 디스크 공간과 폴더 권한을 확인한 뒤 다시 시도해 주세요.');
+    assert.ok(error.details.cause);
+    return true;
+  });
+
+  assert.ok(fs.statSync(`${destination}.part`).isDirectory(), '함수가 .part 파일을 남기지 않는다');
+  assert.equal(fs.existsSync(destination), false);
+});
+
+test('쓰는 도중에 디스크 오류가 나면 WRITE_FAILED 로 실패하고 멈추지 않는다', async (t) => {
+  const directory = tempDir(t);
+  const destination = path.join(directory, 'mod.jar');
+  const original = fs.createWriteStream;
+  t.after(() => {
+    fs.createWriteStream = original;
+  });
+  // 디스크가 가득 찬 것처럼, 열린 뒤 첫 쓰기에서 ENOSPC 를 낸다. 버퍼를 작게 해서 drain 을 기다리게 만든다.
+  fs.createWriteStream = () => new Writable({
+    highWaterMark: 1,
+    write(chunk, encoding, callback) {
+      callback(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }));
+    },
+  });
+  http.setFetch(fakeFetch({ [URL_OK]: { body: BODY } }));
+
+  await assert.rejects(http.download(URL_OK, destination, { allowedHosts: HOSTS }), (error) => error.code === 'WRITE_FAILED' && error.details.cause === 'ENOSPC');
+  assert.equal(fs.existsSync(destination), false);
+});
+
+test('최종 이름으로 바꾸지 못하면 WRITE_FAILED 로 실패하고 .part 파일을 지운다', async (t) => {
+  const directory = tempDir(t);
+  const destination = path.join(directory, 'mod.jar');
+  // 비어 있지 않은 폴더가 최종 이름을 차지하고 있으면 이름을 바꿀 수 없다.
+  fs.mkdirSync(path.join(destination, 'inner'), { recursive: true });
+  http.setFetch(fakeFetch({ [URL_OK]: { body: BODY } }));
+
+  await assert.rejects(http.download(URL_OK, destination, { allowedHosts: HOSTS, hashes: { sha1: SHA1 } }), { code: 'WRITE_FAILED' });
+  assert.equal(fs.existsSync(`${destination}.part`), false);
+});
+
+test('본문을 받다가 끊기면 NETWORK 오류다', async (t) => {
+  const directory = tempDir(t);
+  http.setFetch(async (url) => ({
+    ok: true,
+    status: 200,
+    url: String(url),
+    headers: new Headers({ 'content-length': '10' }),
+    body: (async function* chunks() {
+      yield Buffer.from('abc');
+      throw new Error('socket hang up');
+    })(),
+  }));
+
+  await assert.rejects(http.download(URL_OK, path.join(directory, 'mod.jar'), { allowedHosts: HOSTS }), { code: 'NETWORK' });
+  assert.deepEqual(fs.readdirSync(directory), []);
 });
 
 test('JSON 이 아닌 응답은 안내 오류', async () => {

@@ -14,8 +14,14 @@ const { launchLibraries } = require('./version-meta');
 /** 받을 파일 전체가 이어지는 고정 해시. 테스트에서는 가짜 서버에 맞춘 값을 넘긴다. */
 const DEFAULT_PINS = { minecraftVersion: MINECRAFT_VERSION, version: MINECRAFT_VERSION_JSON, runtime: JAVA_RUNTIME, fabric: FABRIC };
 const CONCURRENCY = 8;
-/** 연결이 끊긴 경우(NETWORK)에만 파일당 이만큼 시도한다. 해시 불일치 같은 다른 오류는 바로 실패한다. */
+/** 연결이 끊기거나(NETWORK) 서버가 잠깐 바쁜 경우(HTTP 429, 5xx)에만 파일당 이만큼 시도한다. 해시 불일치 같은 다른 오류는 바로 실패한다. */
 const NETWORK_ATTEMPTS = 3;
+/** 다시 시도하기 전에 (이 값 × 시도 횟수) 밀리초 기다린다. 테스트에서는 setRetryDelay(0) 으로 줄인다. */
+let retryDelayMs = 500;
+
+function setRetryDelay(milliseconds) {
+  retryDelayMs = milliseconds;
+}
 const ASSET_HOST = 'https://resources.download.minecraft.net';
 const CHECKING_MESSAGE = '게임 파일을 확인하는 중...';
 
@@ -55,15 +61,22 @@ async function fileSha1(file) {
   return hash.digest('hex');
 }
 
-/** 고정 해시로 받는다. NETWORK 오류만 다시 시도한다. */
+/** 다시 시도할 만한 오류인가. WRITE_FAILED, HASH_MISMATCH, UNTRUSTED_URL, 404 같은 다른 HTTP 상태는 아니다. */
+function isRetryable(error) {
+  return error.code === 'NETWORK' || (error.code === 'HTTP' && (error.details.status === 429 || error.details.status >= 500));
+}
+
+/** 고정 해시로 받는다. 일시적인 오류만 잠깐 기다렸다가 다시 시도한다. */
 async function downloadVerified(url, destination, sha1, onProgress) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await http.download(url, destination, { allowedHosts: DOWNLOAD_HOSTS, hashes: { sha1 }, onProgress });
     } catch (error) {
-      if (error.code !== 'NETWORK' || attempt >= NETWORK_ATTEMPTS) {
+      if (!isRetryable(error) || attempt >= NETWORK_ATTEMPTS) {
         throw error;
       }
+
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
     }
   }
 }
@@ -274,4 +287,4 @@ async function quickStatus(dataDir, pins = DEFAULT_PINS) {
   return (await exists(files.clientJar)) && (await exists(files.javaPath));
 }
 
-module.exports = { DEFAULT_PINS, layout, planGameFiles, ensureGameFiles, quickStatus };
+module.exports = { DEFAULT_PINS, layout, planGameFiles, ensureGameFiles, quickStatus, setRetryDelay };

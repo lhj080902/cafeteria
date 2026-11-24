@@ -6,11 +6,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { afterEach, test } = require('node:test');
 const { DOWNLOAD_HOSTS } = require('../../src/main/constants');
-const { ensureGameFiles, layout, planGameFiles, quickStatus } = require('../../src/main/game-files');
+const { ensureGameFiles, layout, planGameFiles, quickStatus, setRetryDelay } = require('../../src/main/game-files');
 const http = require('../../src/main/http');
 const { fakeFetch, live, tempDir } = require('./helpers');
 
 afterEach(() => http.setFetch((...args) => globalThis.fetch(...args)));
+// 다시 시도하기 전의 대기 때문에 테스트가 느려지지 않게 한다.
+setRetryDelay(0);
 
 const sha1 = (content) => crypto.createHash('sha1').update(content).digest('hex');
 
@@ -238,6 +240,33 @@ test('잠깐 끊긴 다운로드는 다시 시도하고, 계속 실패하면 오
   const otherDir = tempDir(t);
   await assert.rejects(ensureGameFiles({ dataDir: otherDir, pins: world.pins }), { code: 'NETWORK' });
   assert.equal(fetch.calls.filter((call) => call.url === world.urls.assetA).length, 3);
+});
+
+test('서버의 일시적인 오류(503)는 다시 시도해서 받는다', async (t) => {
+  const world = makeWorld();
+  let failures = 1;
+  const busy = () => {
+    if (failures > 0) {
+      failures -= 1;
+      return { status: 503, body: 'Service Unavailable' };
+    }
+
+    return world.routes[world.urls.assetA];
+  };
+  const fetch = fakeFetch({ ...world.routes, [world.urls.assetA]: busy });
+  http.setFetch(fetch);
+  const dataDir = tempDir(t);
+  await ensureGameFiles({ dataDir, pins: world.pins });
+  assert.deepEqual(readTree(dataDir), world.expected);
+  assert.equal(fetch.calls.filter((call) => call.url === world.urls.assetA).length, 2);
+});
+
+test('없는 파일(404)은 다시 시도하지 않고 바로 실패한다', async (t) => {
+  const world = makeWorld();
+  const fetch = fakeFetch({ ...world.routes, [world.urls.assetA]: { status: 404, body: 'Not Found' } });
+  http.setFetch(fetch);
+  await assert.rejects(ensureGameFiles({ dataDir: tempDir(t), pins: world.pins }), (error) => error.code === 'HTTP' && error.details.status === 404);
+  assert.equal(fetch.calls.filter((call) => call.url === world.urls.assetA).length, 1);
 });
 
 test('허용 목록에 없는 주소는 받지 않는다', async (t) => {

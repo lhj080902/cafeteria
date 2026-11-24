@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
+const { once } = require('node:events');
+const { finished } = require('node:stream/promises');
 const { USER_AGENT } = require('./constants');
 const { LauncherError } = require('./errors');
 
@@ -103,6 +105,13 @@ async function sendJson(url, { method = 'GET', headers = {}, json, form } = {}) 
   }
 }
 
+/** 폴더 만들기, 임시 파일 열기·쓰기, 이름 바꾸기처럼 이 컴퓨터 안에서 난 실패. 연결 문제가 아니므로 다시 시도하지 않는다. */
+function writeFailed(error) {
+  return new LauncherError('WRITE_FAILED', '파일을 저장하지 못했습니다. 디스크 공간과 폴더 권한을 확인한 뒤 다시 시도해 주세요.', {
+    cause: error.code || error.message,
+  });
+}
+
 /**
  * 파일을 내려받는다. 임시 파일(.part)에 받으면서 해시를 계산하고, 검증이 끝난 뒤에만 최종 이름으로 바꾼다.
  *
@@ -132,19 +141,37 @@ async function download(url, destination, { allowedHosts, hashes = {}, onProgres
   const temporary = `${destination}.part`;
   const sha1 = crypto.createHash('sha1');
   const sha512 = crypto.createHash('sha512');
-  await fsp.mkdir(path.dirname(destination), { recursive: true });
+
+  try {
+    await fsp.mkdir(path.dirname(destination), { recursive: true });
+  } catch (error) {
+    throw writeFailed(error);
+  }
+
   const file = fs.createWriteStream(temporary);
+  // 열기·쓰기 오류는 언제 나도 여기서 받아 둔다. 듣는 곳이 없으면 프로세스 전체가 잡히지 않은 예외로 멈춘다.
+  let writeError = null;
+  file.on('error', (error) => {
+    writeError = writeError || error;
+  });
   let received = 0;
 
   try {
     for await (const chunk of response.body) {
+      if (writeError) {
+        throw writeFailed(writeError);
+      }
+
       const buffer = Buffer.from(chunk);
       sha1.update(buffer);
       sha512.update(buffer);
       received += buffer.length;
 
       if (!file.write(buffer)) {
-        await new Promise((resolve) => file.once('drain', resolve));
+        // events.once 는 기다리는 동안 'error' 가 나면 거부된다.
+        await once(file, 'drain').catch((error) => {
+          throw writeFailed(error);
+        });
       }
 
       if (onProgress) {
@@ -152,10 +179,14 @@ async function download(url, destination, { allowedHosts, hashes = {}, onProgres
       }
     }
 
-    await new Promise((resolve, reject) => {
-      file.once('error', reject);
-      file.end(resolve);
+    file.end();
+    await finished(file).catch((error) => {
+      throw writeFailed(writeError || error);
     });
+
+    if (writeError) {
+      throw writeFailed(writeError);
+    }
 
     const actual = { sha1: sha1.digest('hex'), sha512: sha512.digest('hex') };
 
@@ -168,11 +199,23 @@ async function download(url, destination, { allowedHosts, hashes = {}, onProgres
       }
     }
 
-    await fsp.rename(temporary, destination);
+    try {
+      await fsp.rename(temporary, destination);
+    } catch (error) {
+      throw writeFailed(error);
+    }
+
     return { size: received, ...actual };
   } catch (error) {
-    file.destroy();
-    await fsp.rm(temporary, { force: true });
+    if (!file.closed) {
+      await new Promise((resolve) => {
+        file.once('close', resolve);
+        file.destroy();
+      });
+    }
+
+    // 같은 이름의 폴더처럼 지울 수 없는 것이 있어도 원래 오류를 그대로 알린다.
+    await fsp.rm(temporary, { force: true }).catch(() => {});
 
     if (error instanceof LauncherError) {
       throw error;

@@ -140,11 +140,14 @@ function buildArgs({ versionJson, layout, libraries, session, gameDir, launcherV
  * args 에는 액세스 토큰이 들어 있으므로 오류나 로그에 넣지 않는다.
  */
 async function launchGame({ javaPath, args, gameDir, spawn = childProcess.spawn }) {
-  const logDir = path.join(gameDir, 'logs');
-  fs.mkdirSync(logDir, { recursive: true });
-  const fd = fs.openSync(path.join(logDir, 'launcher-stderr.log'), 'w');
+  const failed = (cause) => new LauncherError('LAUNCH_FAILED', '게임을 시작하지 못했습니다. Java 실행 파일을 확인해 주세요.', { javaPath, cause });
+  let fd = null;
 
   try {
+    const logDir = path.join(gameDir, 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    fd = fs.openSync(path.join(logDir, 'launcher-stderr.log'), 'w');
+
     return await new Promise((resolve, reject) => {
       const child = spawn(javaPath, args, { cwd: gameDir, detached: true, stdio: ['ignore', 'ignore', fd] });
 
@@ -153,11 +156,20 @@ async function launchGame({ javaPath, args, gameDir, spawn = childProcess.spawn 
         resolve(child);
       });
       child.once('error', (error) => {
-        reject(new LauncherError('LAUNCH_FAILED', '게임을 시작하지 못했습니다. Java 실행 파일을 확인해 주세요.', { javaPath, cause: error.message }));
+        reject(failed(error.message));
       });
     });
+  } catch (error) {
+    if (error instanceof LauncherError) {
+      throw error;
+    }
+
+    // 곧바로 던진 예외(로그 파일, spawn)는 문구에 인수 값이 들어갈 수 있어서 오류 코드만 남긴다.
+    throw failed(error.code || error.message);
   } finally {
-    fs.closeSync(fd);
+    if (fd !== null) {
+      fs.closeSync(fd);
+    }
   }
 }
 

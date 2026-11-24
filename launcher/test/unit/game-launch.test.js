@@ -5,8 +5,11 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
+const constants = require('../../src/main/constants');
+const { planGameFiles } = require('../../src/main/game-files');
 const { buildArgs, launchGame, splitArgs } = require('../../src/main/game-launch');
-const { tempDir } = require('./helpers');
+const { launchLibraries } = require('../../src/main/version-meta');
+const { live, tempDir } = require('./helpers');
 
 /** 실제 1.21.4.json 의 arguments 를 그대로 옮긴 것 (2026-11-24). */
 const VERSION_JSON = {
@@ -163,4 +166,43 @@ test('Java 를 실행하지 못하면 LAUNCH_FAILED 이고 오류에 실행 인�
   const error = await launchGame({ javaPath: 'C:\\없는\\javaw.exe', args: ['--accessToken', 'ACCESS_TOKEN'], gameDir: tempDir(t), spawn: fakeSpawn('error') }).catch((caught) => caught);
   assert.equal(error.code, 'LAUNCH_FAILED');
   assert.ok(!JSON.stringify({ message: error.message, details: error.details }).includes('ACCESS_TOKEN'));
+});
+
+test('spawn 이 곧바로 예외를 던져도 LAUNCH_FAILED 이고 오류에 실행 인수가 들어가지 않는다', async (t) => {
+  const javaPath = 'C:\\잘못된\\파일.txt';
+  const args = ['--accessToken', 'ACCESS_TOKEN'];
+  // Node 는 일부 실패를 이벤트가 아니라 예외로 던지고, 그 문구에 인수 값이 들어가기도 한다.
+  const throwing = (command, spawnArgs) => {
+    throw Object.assign(new Error(`The argument 'args[1]' is invalid. Received '${spawnArgs[1]}'`), { code: 'ERR_INVALID_ARG_VALUE' });
+  };
+  const error = await launchGame({ javaPath, args, gameDir: tempDir(t), spawn: throwing }).catch((caught) => caught);
+  assert.equal(error.code, 'LAUNCH_FAILED');
+  assert.equal(error.details.javaPath, javaPath);
+  assert.ok(error.details.cause);
+  assert.ok(!JSON.stringify({ message: error.message, details: error.details }).includes('ACCESS_TOKEN'));
+
+  // 로그 폴더를 만들 수 없어도 같은 오류다.
+  const gameDir = tempDir(t);
+  fs.writeFileSync(path.join(gameDir, 'logs'), '폴더가 아니라 파일');
+  const logError = await launchGame({ javaPath, args, gameDir, spawn: fakeSpawn('spawn') }).catch((caught) => caught);
+  assert.equal(logError.code, 'LAUNCH_FAILED');
+});
+
+test('실제 서버: 고정한 목록 파일로 실행 인수 전체를 만들면 빈 자리 없이 맞게 이어진다', live, async (t) => {
+  // 목록 파일 3개만 실제로 받는다. 게임 파일은 받지 않는다. 세션은 가짜 값이다.
+  const { versionJson, layout, files } = await planGameFiles({ dataDir: tempDir(t) });
+  const session = { accessToken: 'FAKE_SESSION_TOKEN', name: 'Steve', uuid: '0123456789abcdef0123456789abcdef', xuid: '2535400000000000' };
+  const args = buildArgs({ versionJson, layout, libraries: launchLibraries(versionJson), session, gameDir: tempDir(t), launcherVersion: '1.3.0', memoryGb: 4 });
+
+  assert.deepEqual(args.filter((arg) => arg.includes('${')), []);
+  const classpathIndex = args.indexOf('-cp') + 1;
+  assert.ok(classpathIndex > 0);
+  assert.ok(args.indexOf(constants.FABRIC.mainClass) > classpathIndex, '메인 클래스는 클래스패스 뒤에 온다');
+
+  const entries = args[classpathIndex].split(';');
+  const libraryFiles = new Set(files.filter((file) => file.kind === 'library').map((file) => file.file));
+  assert.equal(entries.at(-1), layout.clientJar);
+  assert.ok(entries.length > 1);
+  assert.deepEqual(entries.slice(0, -1).filter((entry) => !libraryFiles.has(entry)), [], '클래스패스의 라이브러리는 모두 받을 목록에 있다');
+  assert.equal(args[args.indexOf('--accessToken') + 1], 'FAKE_SESSION_TOKEN');
 });
