@@ -118,5 +118,9 @@
 	"cafeteria.module.title": "Title",
 	"cafeteria.module.title.desc": "Move and resize titles",
 	"cafeteria.hud.sample.title": "Title",
-	"cafeteria.hud.sample.subtitle": "Subtitle"
+	"cafeteria.hud.sample.subtitle": "Subtitle",
+	"cafeteria.module.scoreboard": "Scoreboard",
+	"cafeteria.module.scoreboard.desc": "Move and resize the sidebar",
+	"cafeteria.hud.sample.scoreboard": "Scoreboard",
+	"cafeteria.hud.sample.scoreboard_line": "Line %s"
 }

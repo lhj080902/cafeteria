@@ -118,5 +118,9 @@
 	"cafeteria.module.title": "타이틀",
 	"cafeteria.module.title.desc": "화면 가운데 큰 글씨의 위치·크기",
 	"cafeteria.hud.sample.title": "타이틀",
-	"cafeteria.hud.sample.subtitle": "부제목"
+	"cafeteria.hud.sample.subtitle": "부제목",
+	"cafeteria.module.scoreboard": "스코어보드",
+	"cafeteria.module.scoreboard.desc": "오른쪽 점수판의 위치·크기",
+	"cafeteria.hud.sample.scoreboard": "스코어보드",
+	"cafeteria.hud.sample.scoreboard_line": "항목 %s"
 }

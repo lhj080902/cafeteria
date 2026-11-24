@@ -3,12 +3,14 @@ package io.github.lhj080902.cafeteria.mixin;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import io.github.lhj080902.cafeteria.Modules;
+import io.github.lhj080902.cafeteria.hud.ScoreboardHud;
 import io.github.lhj080902.cafeteria.hud.TitleHud;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.scores.Objective;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -41,6 +43,25 @@ public abstract class GuiMixin {
 
 		try {
 			original.call(graphics, deltaTracker);
+		} finally {
+			if (transformed) {
+				graphics.pose().popPose();
+			}
+		}
+	}
+
+	/** 스코어보드 위치·크기: 바닐라가 사이드바를 그리는 동안만 이동·배율 변환을 건다. 타이틀과 같은 방식이다. */
+	@WrapMethod(method = "displayScoreboardSidebar", require = 0)
+	private void cafeteria$placeScoreboard(GuiGraphics graphics, Objective objective, Operation<Void> original) {
+		boolean transformed = false;
+
+		if (Modules.SCOREBOARD.isEnabled()) {
+			int[] box = ScoreboardHud.box(Minecraft.getInstance().font, objective, graphics.guiWidth(), graphics.guiHeight());
+			transformed = Modules.SCOREBOARD.begin(graphics, box[0], box[1], box[2], box[3]);
+		}
+
+		try {
+			original.call(graphics, objective);
 		} finally {
 			if (transformed) {
 				graphics.pose().popPose();

@@ -90,6 +90,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testHudResizeHandles(context);
 			testHudBoxSelection(context, input);
 			testTitlePlacement(context, server);
+			testScoreboardPlacement(context, server);
 			testFullbright(context, input, server);
 			testLowFire(context, server);
 			testConfig(context);
@@ -1495,6 +1496,118 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		int sampleWhite = whitePixels(context, editing, sampleBox);
 		int plainWhite = whitePixels(context, plain, sampleBox);
 		check(sampleWhite > plainWhite + 200, "편집 화면에 타이틀 예시가 보이지 않습니다: " + plainWhite + " → " + sampleWhite + "픽셀");
+	}
+
+	/**
+	 * 스코어보드(화면 오른쪽): 기본 상태는 바닐라와 같고, 크기만 바꾸면 오른쪽 끝에 붙어 있으며,
+	 * 편집 화면에서 꼭짓점을 끌면 반대쪽 꼭짓점이 제자리에 있고 그때부터 옮긴 것으로 기억한다.
+	 */
+	private static void testScoreboardPlacement(ClientGameTestContext context, TestServerContext server) {
+		check(Modules.SCOREBOARD.isEnabled(), "스코어보드 요소는 기본으로 켜져 있어야 합니다");
+		int width = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth());
+		int height = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledHeight());
+		check(markerBounds(context, "scoreboard-none")[0] == 0, "배경에 표시 색과 같은 픽셀이 있어서 잴 수 없습니다");
+		// 오른쪽에 겹쳐 그려지는 HUD(갑옷 등)가 섞이지 않게 이 검사 동안에는 스코어보드 요소만 켜 둔다.
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.SCOREBOARD);
+			}
+		});
+		server.runCommand("scoreboard objectives add cafe dummy {\"text\":\"███\",\"color\":\"aqua\"}");
+		server.runCommand("scoreboard objectives setdisplay sidebar cafe");
+		server.runCommand("scoreboard players set Alpha cafe 3");
+		server.runCommand("scoreboard players set Beta cafe 2");
+		context.waitTicks(10);
+
+		// 1) 기본 상태는 요소를 끈 것(바닐라 그대로)과 같고, 화면 오른쪽 끝에 있다.
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.setEnabled(false));
+		context.waitTicks(3);
+		double[] vanilla = markerBounds(context, "scoreboard-vanilla");
+		check(vanilla[0] > 50, "스코어보드가 화면에 보이지 않습니다: " + describe(vanilla));
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.setEnabled(true));
+		context.waitTicks(3);
+		double[] normal = markerBounds(context, "scoreboard-default");
+		check(java.util.Arrays.equals(normal, vanilla), "기본 상태의 스코어보드가 바닐라와 다르게 그려졌습니다: " + describe(vanilla) + " → " + describe(normal));
+		check(width - normal[3] <= 40, "스코어보드가 화면 오른쪽 끝에 있지 않습니다: " + describe(normal));
+		check(context.computeOnClient(Modules.SCOREBOARD::isLive), "화면에 뜬 스코어보드를 요소가 알지 못합니다");
+		int[] normalBox = elementBox(context, Modules.SCOREBOARD);
+		check(inside(normal, normalBox), "스코어보드가 요소 상자 밖에 그려졌습니다: " + describe(normal) + " / 상자 " + java.util.Arrays.toString(normalBox));
+		// 제목 줄(9) + 점수 두 줄(18) + 위아래 여백(1)
+		check(normalBox[3] == 28 && normalBox[0] + normalBox[2] == width - 1, "스코어보드 상자가 바닐라 배치와 다릅니다: " + java.util.Arrays.toString(normalBox));
+
+		// 2) 옮기지 않고 크기만 바꾸면(휠과 같은 경로) 오른쪽 끝에 붙은 채로 커진다.
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.rescale(minecraft, 1.5, width, height));
+		context.waitTicks(3);
+		double[] grown = markerBounds(context, "scoreboard-grown");
+		int[] grownBox = elementBox(context, Modules.SCOREBOARD);
+		check(!Modules.SCOREBOARD.isMoved(), "크기만 바꿨는데 옮긴 것으로 처리됐습니다");
+		check(grownBox[0] + grownBox[2] >= width - 3 && grownBox[0] + grownBox[2] <= width, "크기를 키운 스코어보드가 오른쪽 끝에서 떨어졌습니다: " + java.util.Arrays.toString(grownBox));
+		check(inside(grown, grownBox), "키운 스코어보드가 요소 상자 밖에 그려졌습니다: " + describe(grown) + " / 상자 " + java.util.Arrays.toString(grownBox));
+		check(Math.abs((grown[4] - grown[2]) - (normal[4] - normal[2]) * 1.5) <= 2, "스코어보드가 1.5배가 되지 않았습니다: " + describe(normal) + " → " + describe(grown));
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.scale.reset());
+
+		// 3) 편집 화면에서 왼쪽 아래 꼭짓점을 끌면 오른쪽 위 꼭짓점은 제자리에 있고, 그때부터 옮긴 것으로 기억한다.
+		context.setScreen(() -> new HudEditScreen(null));
+		context.waitTicks(3);
+		check(context.computeOnClient(Modules.SCOREBOARD::isLive), "편집 화면에서 스코어보드를 예시로 바꿔 그렸습니다");
+		int[] before = elementBox(context, Modules.SCOREBOARD);
+		context.runOnClient(minecraft -> {
+			minecraft.screen.mouseClicked(before[0], before[1] + before[3], 0);
+			minecraft.screen.mouseDragged(before[0] - before[2] * 0.3, before[1] + before[3] * 1.3, 0, 0, 0);
+			minecraft.screen.mouseReleased(before[0] - before[2] * 0.3, before[1] + before[3] * 1.3, 0);
+		});
+		int[] dragged = elementBox(context, Modules.SCOREBOARD);
+		check(Math.abs(Modules.SCOREBOARD.scale.get() - 1.3) < 0.03, "스코어보드가 꼭짓점을 끈 만큼 커지지 않았습니다: " + Modules.SCOREBOARD.scale.get());
+		check(Modules.SCOREBOARD.isMoved(), "꼭짓점을 끌었는데 옮긴 것으로 기억하지 않습니다");
+		check(Math.abs(dragged[0] + dragged[2] - (before[0] + before[2])) <= 1 && Math.abs(dragged[1] - before[1]) <= 1,
+			"왼쪽 아래를 끌었는데 오른쪽 위가 움직였습니다: " + java.util.Arrays.toString(before) + " → " + java.util.Arrays.toString(dragged));
+		context.waitTicks(3);
+		check(inside(markerBounds(context, "hud-edit-scoreboard-resized"), dragged), "끌어서 키운 스코어보드가 요소 상자 밖에 그려졌습니다");
+		context.clickScreenButton("cafeteria.hud_edit.reset");
+		check(!Modules.SCOREBOARD.isMoved(), "위치 초기화를 눌렀는데 바닐라 자리로 돌아가지 않았습니다");
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.scale.reset());
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		context.waitTicks(3);
+		check(java.util.Arrays.equals(markerBounds(context, "scoreboard-restored"), vanilla), "되돌린 스코어보드가 바닐라와 다릅니다");
+
+		// 4) 왼쪽 위로 옮기면 그 자리에 그려진다.
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.setPosition(minecraft, 5, 5, width, height));
+		context.waitTicks(3);
+		double[] placed = markerBounds(context, "scoreboard-moved");
+		int[] placedBox = elementBox(context, Modules.SCOREBOARD);
+		check(placedBox[0] == 5 && placedBox[1] == 5, "스코어보드 요소가 옮긴 자리에 있지 않습니다: " + java.util.Arrays.toString(placedBox));
+		check(inside(placed, placedBox), "옮긴 스코어보드가 요소 상자 밖에 그려졌습니다: " + describe(placed) + " / 상자 " + java.util.Arrays.toString(placedBox));
+
+		// 5) 줄이 많고(바닐라는 15줄까지만 보여 준다) 200%여서 화면보다 커도 자리 계산이 깨지지 않는다.
+		for (int i = 1; i <= 17; i++) {
+			server.runCommand("scoreboard players set Line" + i + " cafe " + (10 + i));
+		}
+
+		context.waitTicks(10);
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.scale.set(2.0));
+		int[] tall = elementBox(context, Modules.SCOREBOARD);
+		check(tall[3] == (15 * 9 + 10) * 2, "스코어보드가 15줄 기준 높이가 아닙니다: " + java.util.Arrays.toString(tall));
+		int[] cramped = context.computeOnClient(minecraft -> new int[] {Modules.SCOREBOARD.x(minecraft, 200), Modules.SCOREBOARD.y(minecraft, 120)});
+		check(cramped[0] >= 0 && cramped[1] >= 0, "화면보다 큰 스코어보드의 자리가 화면 밖입니다: " + java.util.Arrays.toString(cramped));
+		context.runOnClient(minecraft -> Modules.SCOREBOARD.resetPosition());
+		cramped = context.computeOnClient(minecraft -> new int[] {Modules.SCOREBOARD.x(minecraft, 200), Modules.SCOREBOARD.y(minecraft, 120)});
+		check(cramped[0] >= 0 && cramped[1] >= 0, "옮기지 않은 큰 스코어보드의 자리가 화면 밖입니다: " + java.util.Arrays.toString(cramped));
+		context.waitTicks(3);
+		context.takeScreenshot("scoreboard-tall");
+
+		server.runCommand("scoreboard objectives remove cafe");
+		context.waitTicks(5);
+		context.runOnClient(minecraft -> {
+			Modules.SCOREBOARD.scale.reset();
+			Modules.SCOREBOARD.resetPosition();
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+			}
+		});
+		check(markerBounds(context, "scoreboard-removed")[0] == 0, "스코어보드를 지웠는데 화면에 남아 있습니다");
+		check(!context.computeOnClient(Modules.SCOREBOARD::isLive), "스코어보드가 없는데 떠 있다고 판단했습니다");
 	}
 
 	private static void testFullbright(ClientGameTestContext context, TestInput input, TestServerContext server) {
