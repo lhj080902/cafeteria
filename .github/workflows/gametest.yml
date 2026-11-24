@@ -1,6 +1,6 @@
 # 모드 게임 테스트: 실제 게임을 가상 화면(xvfb)에 띄워서 모듈 동작을 검사한다.
 # 개발 환경(runClientGameTest)과 배포용 jar(runProductionClientGameTest)를 따로 돌리고,
-# 배포용 jar 는 미니맵 모드(Xaero's Minimap, World Map)와 함께도 한 번 더 돌린다.
+# 배포용 jar 는 미니맵 모드(Xaero's Minimap, World Map), 렌더링 모드(Sodium)와 함께도 한 번씩 더 돌린다.
 # Linux 에서 소프트웨어 렌더링으로 돌리므로 Windows 전용 동작은 여기서 확인되지 않는다.
 name: 모드 게임 테스트
 
@@ -37,7 +37,12 @@ jobs:
           - name: productionClientGameTest-xaero
             task: runProductionClientGameTest
             run_dir: productionClientGameTest
-            extra_mods: true
+            extra_mods: xaero
+          # Sodium 은 지형을 직접 그린다. 안개 제거가 Sodium 이 그린 지형에도 먹히는지 본다.
+          - name: productionClientGameTest-sodium
+            task: runProductionClientGameTest
+            run_dir: productionClientGameTest
+            extra_mods: sodium
     defaults:
       run:
         # bash 를 적어 줘야 pipefail 이 켜진다. 없으면 "gradlew | tee" 에서 gradlew 의 실패가 가려진다.
@@ -61,8 +66,8 @@ jobs:
             libxi6 libxrandr2 libxrender1 libxtst6 libxinerama1 libxcursor1 libxxf86vm1
 
       # 받은 파일은 고정해 둔 sha512 와 같을 때만 쓴다 (Modrinth 에 올라온 1.21.4 Fabric 용 파일).
-      - name: 함께 돌릴 모드 받기
-        if: matrix.extra_mods
+      - name: 함께 돌릴 모드 받기 (Xaero's Minimap, World Map)
+        if: matrix.extra_mods == 'xaero'
         run: |
           mkdir -p "$RUNNER_TEMP/extra-mods"
           cd "$RUNNER_TEMP/extra-mods"
@@ -73,6 +78,17 @@ jobs:
           e5ac31fa366d48d02ace2489487f117dab68f59bb24bd153337a1a40e927f0f6db57cd970ac7b8776994f83239ddfa8483583a7e69dbf4e4eadab2f262716490  xaeroworldmap-fabric-1.21.4-1.46.0.jar
           SUMS
           echo "EXTRA_MODS=-PextraMods=$PWD/xaerominimap-fabric-1.21.4-26.5.0.jar,$PWD/xaeroworldmap-fabric-1.21.4-1.46.0.jar" >> "$GITHUB_ENV"
+
+      - name: 함께 돌릴 모드 받기 (Sodium)
+        if: matrix.extra_mods == 'sodium'
+        run: |
+          mkdir -p "$RUNNER_TEMP/extra-mods"
+          cd "$RUNNER_TEMP/extra-mods"
+          curl -fsSL -o "sodium-fabric-0.6.13+mc1.21.4.jar" "https://cdn.modrinth.com/data/AANobbMI/versions/c3YkZvne/sodium-fabric-0.6.13%2Bmc1.21.4.jar"
+          sha512sum -c - <<'SUMS'
+          2c72ca2ddfd27e29ff6c24fccdf6f3d80857bd1014c707017f96cb4a424f94918e53ba21d85f22e3c9171803f8d2c12c99ae857d38d8e85546cc65960b95a2f1  sodium-fabric-0.6.13+mc1.21.4.jar
+          SUMS
+          echo "EXTRA_MODS=-PextraMods=$PWD/sodium-fabric-0.6.13+mc1.21.4.jar" >> "$GITHUB_ENV"
 
       - name: 게임 테스트
         env:
