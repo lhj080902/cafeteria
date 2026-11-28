@@ -2421,7 +2421,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 	/**
 	 * 인벤토리 HUD: 핫바를 뺀 27칸을 보여 준다. 그 칸이 모두 비어 있으면 숨고, 편집 화면에서는 예시 아이템을 보여 준다.
-	 * 배경색이 비교에 섞이지 않도록 실명 효과로 화면을 검게 만든 뒤에 스크린샷에서 칸 자리를 잰다.
+	 * 칸 배경은 밝은 화면에서 밝기로, 아이템 그림은 실명 효과로 화면을 검게 만든 뒤에 색으로 잰다.
 	 */
 	private static void testInventoryHud(ClientGameTestContext context, TestServerContext server) {
 		check(!Modules.INVENTORY.isEnabled(), "인벤토리 HUD 는 기본으로 꺼져 있어야 합니다");
@@ -2440,6 +2440,39 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.waitTicks(5);
 		check(context.computeOnClient(Modules.INVENTORY::hasContent), "인벤토리에 아이템이 있는데 인벤토리 HUD 가 비어 있습니다");
 
+		// 여기부터는 스크린샷으로 본다. 떠 있는 알림을 치우고, 다른 HUD 가 겹치지 않게 인벤토리 HUD 만 켠다.
+		context.runOnClient(minecraft -> {
+			minecraft.getToastManager().clear();
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.INVENTORY);
+			}
+		});
+
+		// 칸 배경은 밝은 화면에서 잰다: 칸 안쪽만 어두워지고 칸 사이의 틈은 그대로다. 설정을 끄면 배경이 사라진다.
+		check(Modules.INVENTORY.background.get(), "인벤토리 HUD 의 배경은 기본으로 켜져 있어야 합니다");
+		int[] origin = position(context, Modules.INVENTORY);
+		// 가운데 줄의 빈 칸(14번) 한가운데와, 그 칸과 오른쪽 칸(15번) 사이의 틈.
+		double cellX = origin[0] + InventoryHud.slotX(14) + 8;
+		double cellY = origin[1] + InventoryHud.slotY(14) + 8;
+		double gapX = origin[0] + InventoryHud.slotX(15) - 1;
+		context.waitTicks(3);
+		BufferedImage backed = readImage(context.takeScreenshot("inventory-hud-background"));
+		context.runOnClient(minecraft -> Modules.INVENTORY.background.set(false));
+		context.waitTicks(3);
+		BufferedImage plain = readImage(context.takeScreenshot("inventory-hud-no-background"));
+		context.runOnClient(minecraft -> Modules.INVENTORY.background.reset());
+		double cellPlain = brightnessAt(context, plain, cellX, cellY);
+		double cellBacked = brightnessAt(context, backed, cellX, cellY);
+		double gapPlain = brightnessAt(context, plain, gapX, cellY);
+		double gapBacked = brightnessAt(context, backed, gapX, cellY);
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 인벤토리 HUD 칸 배경의 밝기(배경 끔 → 켬) — 칸 안 {} → {}, 칸 사이 {} → {}",
+			round(cellPlain), round(cellBacked), round(gapPlain), round(gapBacked));
+		check(cellPlain >= 30, "칸 뒤의 화면이 너무 어두워서 칸 배경을 잴 수 없습니다: 밝기 " + round(cellPlain));
+		check(cellBacked <= cellPlain - 12, "인벤토리 HUD 의 칸 배경이 그려지지 않았습니다: 밝기 " + round(cellPlain) + " → " + round(cellBacked));
+		check(Math.abs(gapBacked - gapPlain) <= 8, "칸 사이의 틈까지 배경이 칠해졌습니다: 밝기 " + round(gapPlain) + " → " + round(gapBacked));
+
+		// 아이템 그림은 색으로 가려낸다. 월드의 색이 섞이지 않게 실명 효과로 화면을 검게 만든다.
 		// 입자가 재는 자리를 덮지 않게 입자 설정을 "최소"로 두고, 이미 떠 있던 것(수명 최대 40틱)이 사라질 때까지 기다린다.
 		ParticleStatus particles = context.computeOnClient(minecraft -> {
 			ParticleStatus before = minecraft.options.particles().get();
@@ -2448,15 +2481,6 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		});
 		server.runCommand("effect give @a minecraft:blindness 120 0 true");
 		context.waitTicks(50);
-		// 알림을 치우고 인벤토리 HUD 만 켠다.
-		context.runOnClient(minecraft -> {
-			minecraft.getToastManager().clear();
-
-			for (HudElement element : Modules.HUD) {
-				element.setEnabled(element == Modules.INVENTORY);
-			}
-		});
-		context.waitTicks(3);
 		int[] first = inventorySlotArea(context, 0);
 		int[] sixth = inventorySlotArea(context, 5);
 		BufferedImage shown = readImage(context.takeScreenshot("inventory-hud"));
