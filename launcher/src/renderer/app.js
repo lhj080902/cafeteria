@@ -981,30 +981,35 @@ function bindEvents() {
   $('#setting-mod-update-check').addEventListener('change', (event) => saveSettings({ modUpdateCheck: event.target.checked }));
   $('#setting-open-logs').addEventListener('click', () => unwrap(api.openLogsFolder()).catch(showError));
 
-  // Cafeteria 설정 공유. 대화상자를 취소하면 null 이 오고, 그때는 아무것도 띄우지 않는다.
-  $('#client-settings-export').addEventListener('click', async () => {
-    try {
-      const result = await unwrap(api.exportClientSettings());
+  // Cafeteria 설정 공유. 하나가 끝날 때까지 두 버튼을 모두 잠근다 (가져오기가 두 번 겹치면 두 번째가 bak 을 덮어쓴다).
+  const clientSettingsButtons = [$('#client-settings-export'), $('#client-settings-import')];
+  const shareClientSettings = async (call, successMessage) => {
+    for (const button of clientSettingsButtons) {
+      button.disabled = true;
+    }
 
+    try {
+      const result = await unwrap(call());
+
+      // 대화상자를 취소하면 null 이 온다. 그때는 아무것도 띄우지 않는다.
       if (result) {
-        toast(`Cafeteria 설정을 내보냈습니다. (모듈 ${result.modules}개)`, 'success');
+        toast(successMessage(result), 'success');
       }
     } catch (error) {
       showError(error);
-    }
-  });
-
-  $('#client-settings-import').addEventListener('click', async () => {
-    try {
-      const result = await unwrap(api.importClientSettings());
-
-      if (result) {
-        toast('Cafeteria 설정을 가져왔습니다. 다음에 게임을 켜면 적용됩니다.', 'success');
+    } finally {
+      for (const button of clientSettingsButtons) {
+        button.disabled = false;
       }
-    } catch (error) {
-      showError(error);
     }
-  });
+  };
+
+  $('#client-settings-export').addEventListener('click', () =>
+    shareClientSettings(api.exportClientSettings, (result) => `Cafeteria 설정을 내보냈습니다. (모듈 ${result.modules}개)`),
+  );
+  $('#client-settings-import').addEventListener('click', () =>
+    shareClientSettings(api.importClientSettings, () => 'Cafeteria 설정을 가져왔습니다. 다음에 게임을 켜면 적용됩니다.'),
+  );
 
   $('#setting-repair').addEventListener('click', async (event) => {
     const button = event.currentTarget;

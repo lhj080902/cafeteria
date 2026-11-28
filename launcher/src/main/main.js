@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { AccountManager } = require('./account');
-const { SETTINGS_EXTENSION, applyClientSettings, exportClientSettings, readClientSettingsFile } = require('./client-settings');
+const { SETTINGS_EXTENSION, exportFlow, importFlow } = require('./client-settings');
 const { EXTERNAL_HOSTS, LOADER_VERSION, MINECRAFT_VERSION, RELEASES_URL, USER_AGENT } = require('./constants');
 const { LauncherError } = require('./errors');
 const { quickStatus } = require('./game-files');
@@ -98,12 +98,8 @@ function trackGame(child) {
   });
 }
 
-/** 게임이 쓰는 파일(설정, 모드)을 바꾸기 전에 부른다. 바로 실행한 게임이 켜져 있으면 거절한다. */
-function assertGameNotRunning() {
-  if (game !== null) {
-    throw new LauncherError('GAME_RUNNING', '게임이 실행 중입니다. 게임을 끈 뒤 다시 시도해 주세요.');
-  }
-}
+/** 바로 실행한 게임이 켜져 있는지. 게임이 쓰는 파일을 바꾸는 흐름(game-running.js 의 assertGameNotRunning)에 넘긴다. */
+const isGameRunning = () => game !== null;
 
 /**
  * 자동 업데이트 관리자를 만든다. 설치 파일로 설치한 Windows 런처에서만 스스로 설치까지 하고,
@@ -552,47 +548,50 @@ function registerHandlers() {
     importer.importItems({ sourceDirectory, itemIds, gameDir: gameDir(), overwrite: Boolean(overwrite) }),
   );
 
-  handle('clientSettings:export', async () => {
-    const result = await dialog.showSaveDialog(window, {
-      title: 'Cafeteria 설정 내보내기',
-      defaultPath: `Cafeteria-설정.${SETTINGS_EXTENSION}`,
-      filters: [{ name: 'Cafeteria 설정', extensions: [SETTINGS_EXTENSION] }],
-    });
+  // 순서와 검사는 client-settings.js 의 exportFlow, importFlow 에 있다. 여기서는 대화상자만 댄다.
+  handle('clientSettings:export', () =>
+    exportFlow({
+      gameDir: gameDir(),
+      appVersion: app.getVersion(),
+      chooseFile: async () => {
+        const result = await dialog.showSaveDialog(window, {
+          title: 'Cafeteria 설정 내보내기',
+          defaultPath: `Cafeteria-설정.${SETTINGS_EXTENSION}`,
+          filters: [{ name: 'Cafeteria 설정', extensions: [SETTINGS_EXTENSION] }],
+        });
 
-    return result.canceled ? null : exportClientSettings({ gameDir: gameDir(), filePath: result.filePath, appVersion: app.getVersion() });
-  });
+        return result.canceled ? null : result.filePath;
+      },
+    }),
+  );
 
-  handle('clientSettings:import', async () => {
-    assertGameNotRunning();
-    const chosen = await dialog.showOpenDialog(window, {
-      title: '가져올 Cafeteria 설정 파일 선택',
-      filters: [{ name: 'Cafeteria 설정', extensions: [SETTINGS_EXTENSION] }],
-      properties: ['openFile'],
-    });
+  handle('clientSettings:import', () =>
+    importFlow({
+      gameDir: gameDir(),
+      isGameRunning,
+      chooseFile: async () => {
+        const result = await dialog.showOpenDialog(window, {
+          title: '가져올 Cafeteria 설정 파일 선택',
+          filters: [{ name: 'Cafeteria 설정', extensions: [SETTINGS_EXTENSION] }],
+          properties: ['openFile'],
+        });
 
-    if (chosen.canceled) {
-      return null;
-    }
+        return result.canceled ? null : result.filePaths[0];
+      },
+      confirm: async () => {
+        const answer = await dialog.showMessageBox(window, {
+          type: 'question',
+          buttons: ['가져오기', '취소'],
+          defaultId: 0,
+          cancelId: 1,
+          message: 'Cafeteria 설정을 가져올까요?',
+          detail: '지금 설정을 덮어씁니다. 기존 설정은 cafeteria.json.bak 으로 남깁니다.',
+        });
 
-    const clientSettings = await readClientSettingsFile(chosen.filePaths[0]);
-    const answer = await dialog.showMessageBox(window, {
-      type: 'question',
-      buttons: ['가져오기', '취소'],
-      defaultId: 0,
-      cancelId: 1,
-      message: 'Cafeteria 설정을 가져올까요?',
-      detail: '지금 설정을 덮어씁니다. 기존 설정은 cafeteria.json.bak 으로 남깁니다.',
-    });
-
-    if (answer.response !== 0) {
-      return null;
-    }
-
-    // 대화상자가 떠 있는 동안 준비 중이던 게임이 켜졌을 수 있다.
-    assertGameNotRunning();
-    const { backedUp } = await applyClientSettings({ gameDir: gameDir(), settings: clientSettings });
-    return { modules: Object.keys(clientSettings.modules).length, backedUp };
-  });
+        return answer.response === 0;
+      },
+    }),
+  );
 
   handle('account:login', async () => {
     if (loggingIn) {
