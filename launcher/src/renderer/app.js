@@ -981,6 +981,31 @@ function bindEvents() {
   $('#setting-mod-update-check').addEventListener('change', (event) => saveSettings({ modUpdateCheck: event.target.checked }));
   $('#setting-open-logs').addEventListener('click', () => unwrap(api.openLogsFolder()).catch(showError));
 
+  // Cafeteria 설정 공유. 대화상자를 취소하면 null 이 오고, 그때는 아무것도 띄우지 않는다.
+  $('#client-settings-export').addEventListener('click', async () => {
+    try {
+      const result = await unwrap(api.exportClientSettings());
+
+      if (result) {
+        toast(`Cafeteria 설정을 내보냈습니다. (모듈 ${result.modules}개)`, 'success');
+      }
+    } catch (error) {
+      showError(error);
+    }
+  });
+
+  $('#client-settings-import').addEventListener('click', async () => {
+    try {
+      const result = await unwrap(api.importClientSettings());
+
+      if (result) {
+        toast('Cafeteria 설정을 가져왔습니다. 다음에 게임을 켜면 적용됩니다.', 'success');
+      }
+    } catch (error) {
+      showError(error);
+    }
+  });
+
   $('#setting-repair').addEventListener('click', async (event) => {
     const button = event.currentTarget;
     button.disabled = true;

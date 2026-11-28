@@ -45,6 +45,11 @@ contextBridge.exposeInMainWorld('cafeteria', {
   chooseImportFolder: () => invoke('import:chooseFolder'),
   runImport: (sourceDirectory, itemIds, overwrite) => invoke('import:run', sourceDirectory, itemIds, overwrite),
 
+  /** 게임 안 Cafeteria 설정을 파일로 내보낸다. 저장할 곳을 고르지 않으면 null, 아니면 { modules }. */
+  exportClientSettings: () => invoke('clientSettings:export'),
+  /** 내보낸 Cafeteria 설정 파일을 골라 게임 폴더에 넣는다. 취소하면 null, 아니면 { modules, backedUp }. */
+  importClientSettings: () => invoke('clientSettings:import'),
+
   checkForUpdates: () => invoke('update:check'),
   installUpdate: () => invoke('update:install'),
 
