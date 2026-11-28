@@ -135,5 +135,7 @@
 	"cafeteria.module.chat.desc": "Scale the whole chat",
 	"cafeteria.hud.sample.chat": "Chat text size",
 	"cafeteria.module.inventory": "Inventory",
-	"cafeteria.module.inventory.desc": "Shows the 27 inventory slots (no hotbar)"
+	"cafeteria.module.inventory.desc": "Shows the 27 inventory slots (no hotbar)",
+	"cafeteria.module.container_preview": "Container Preview",
+	"cafeteria.module.container_preview.desc": "Hold Shift to see what a shulker box holds"
 }

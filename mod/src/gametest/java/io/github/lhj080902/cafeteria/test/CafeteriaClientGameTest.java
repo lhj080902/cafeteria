@@ -4,12 +4,14 @@ import io.github.lhj080902.cafeteria.CafeteriaClient;
 import io.github.lhj080902.cafeteria.Modules;
 import io.github.lhj080902.cafeteria.config.ConfigManager;
 import io.github.lhj080902.cafeteria.gui.CafeteriaScreen;
+import io.github.lhj080902.cafeteria.gui.ContainerPreviewTooltip;
 import io.github.lhj080902.cafeteria.gui.HudEditScreen;
 import io.github.lhj080902.cafeteria.gui.ModuleSettingsScreen;
 import io.github.lhj080902.cafeteria.hud.ClickTracker;
 import io.github.lhj080902.cafeteria.hud.CombatTracker;
 import io.github.lhj080902.cafeteria.hud.HudElement;
 import io.github.lhj080902.cafeteria.hud.InventoryHud;
+import io.github.lhj080902.cafeteria.module.ContainerPreviewModule;
 import io.github.lhj080902.cafeteria.module.NoFogModule;
 import io.github.lhj080902.cafeteria.module.ScreenshotModule;
 import io.github.lhj080902.cafeteria.util.ScreenshotClipboard;
@@ -28,16 +30,28 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.renderer.FogParameters;
 import net.minecraft.client.renderer.FogRenderer;
 import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
+import net.minecraft.util.Unit;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.inventory.tooltip.BundleTooltip;
+import net.minecraft.world.inventory.tooltip.TooltipComponent;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.BundleContents;
+import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.item.component.SeededContainerLoot;
+import net.minecraft.world.level.storage.loot.BuiltInLootTables;
 import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 
@@ -51,8 +65,11 @@ import java.nio.file.Path;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 실제 클라이언트를 띄워서 Cafeteria 모듈이 게임 안에서 동작하는지 확인한다.
@@ -109,6 +126,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testLowFire(context, server);
 			testNoFog(context, input, server, world.getClientWorld());
 			testInventoryHud(context, server);
+			testContainerPreview(context, input, server);
 			testConfig(context);
 		}
 
@@ -2623,6 +2641,171 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		int[] position = position(context, Modules.INVENTORY);
 		int scale = context.computeOnClient(minecraft -> (int) minecraft.getWindow().getGuiScale());
 		return new int[] {(position[0] + InventoryHud.slotX(index)) * scale, (position[1] + InventoryHud.slotY(index)) * scale, 16 * scale};
+	}
+
+	/**
+	 * 컨테이너 미리보기: Shift 를 누른 채 내용물이 든 셜커 상자·상자에 커서를 올리면 툴팁에 내용물이 9칸 너비 격자로 나온다.
+	 * 자료(칸, 줄 수)는 클라이언트에서 직접 만든 아이템으로 보고, 실제 그림은 인벤토리 화면의 스크린샷으로 본다.
+	 */
+	private static void testContainerPreview(ClientGameTestContext context, TestInput input, TestServerContext server) {
+		// 기본값은 새로 만든 모듈에서 본다.
+		check(new ContainerPreviewModule().isEnabled(), "컨테이너 미리보기는 기본으로 켜져 있어야 합니다");
+		check(Modules.CONTAINER_PREVIEW.isEnabled(), "앞 검사가 컨테이너 미리보기를 꺼 둔 채로 끝났습니다");
+
+		ItemStack diamonds = new ItemStack(Items.DIAMOND, 3);
+		ItemStack shulker = containerItem(Items.SHULKER_BOX, diamonds, 0);
+		ItemStack tooBig = containerItem(Items.SHULKER_BOX, diamonds, 0, 60);
+		ItemStack loot = shulker.copy();
+		loot.set(DataComponents.CONTAINER_LOOT, new SeededContainerLoot(BuiltInLootTables.SIMPLE_DUNGEON, 0L));
+
+		// Shift 를 누르지 않으면 바닐라 그대로다. 글자 줄 수는 적어 두었다가 아래에서 Shift 를 누른 쪽과 비교한다.
+		check(tooltipImage(context, shulker).isEmpty(), "Shift 를 누르지 않았는데 셜커 상자의 미리보기가 나옵니다");
+		int plainLines = tooltipLineCount(context, shulker);
+		int tooBigLines = tooltipLineCount(context, tooBig);
+		int lootLines = tooltipLineCount(context, loot);
+
+		input.holdShift();
+		ContainerPreviewTooltip basic = containerPreview(context, shulker);
+		check(basic != null, "Shift 를 눌렀는데 셜커 상자의 미리보기가 나오지 않습니다");
+		check(basic.rows() == 3 && basic.slots().size() == 27, "칸이 적은 셜커 상자의 미리보기는 3줄 27칸이어야 합니다: " + basic.rows() + "줄 " + basic.slots().size() + "칸");
+		check(basic.slots().get(0).is(Items.DIAMOND) && basic.slots().get(0).getCount() == 3, "미리보기의 0번 칸이 다이아몬드 3개가 아닙니다: " + basic.slots().get(0));
+		check(basic.slots().get(1).isEmpty(), "미리보기의 1번 칸이 비어 있지 않습니다: " + basic.slots().get(1));
+
+		// 줄 수는 마지막으로 찬 칸까지 보이도록 늘어난다 (3~6줄).
+		ContainerPreviewTooltip fourRows = containerPreview(context, containerItem(Items.SHULKER_BOX, diamonds, 0, 30));
+		check(fourRows != null && fourRows.rows() == 4, "30번 칸까지 찬 컨테이너의 미리보기가 4줄이 아닙니다: " + fourRows);
+		ContainerPreviewTooltip sixRows = containerPreview(context, containerItem(Items.SHULKER_BOX, diamonds, 0, 53));
+		check(sixRows != null && sixRows.rows() == 6 && sixRows.slots().size() == 54, "53번 칸까지 찬 컨테이너의 미리보기가 6줄 54칸이 아닙니다: " + sixRows);
+
+		// 54번 칸 이후에도 내용물이 있으면 격자에 다 못 그리므로 바닐라 글자 툴팁을 그대로 둔다.
+		check(tooltipImage(context, containerItem(Items.SHULKER_BOX, diamonds, 0, 54)).isEmpty(), "54번 칸에 내용물이 있는데 미리보기가 나옵니다");
+		check(tooltipImage(context, tooBig).isEmpty(), "60번 칸에 내용물이 있는데 미리보기가 나옵니다");
+		check(tooltipLineCount(context, tooBig) == tooBigLines, "격자에 다 못 그리는 컨테이너의 글자 줄이 Shift 를 누르자 바뀌었습니다: " + tooBigLines + " → " + tooltipLineCount(context, tooBig));
+
+		// 숨김 표시가 붙은 아이템과 아직 열지 않은 전리품 상자의 내용은 드러내지 않는다. 표시만 다른 위의 셜커 상자는 미리보기가 나왔다.
+		ItemStack hiddenAdditional = shulker.copy();
+		hiddenAdditional.set(DataComponents.HIDE_ADDITIONAL_TOOLTIP, Unit.INSTANCE);
+		check(tooltipImage(context, hiddenAdditional).isEmpty(), "추가 툴팁 숨김 표시가 붙은 셜커 상자에 미리보기가 나옵니다");
+		ItemStack hidden = shulker.copy();
+		hidden.set(DataComponents.HIDE_TOOLTIP, Unit.INSTANCE);
+		check(tooltipImage(context, hidden).isEmpty(), "툴팁 숨김 표시가 붙은 셜커 상자에 미리보기가 나옵니다");
+		check(tooltipImage(context, loot).isEmpty(), "아직 열지 않은 전리품 셜커 상자에 미리보기가 나옵니다");
+		check(tooltipLineCount(context, loot) == lootLines, "전리품 셜커 상자의 글자 줄이 Shift 를 누르자 바뀌었습니다: " + lootLines + " → " + tooltipLineCount(context, loot));
+
+		// 내용물이 없는 것과 컨테이너가 아닌 것.
+		check(tooltipImage(context, new ItemStack(Items.SHULKER_BOX)).isEmpty(), "빈 셜커 상자에 미리보기가 나옵니다");
+		check(tooltipImage(context, new ItemStack(Items.DIAMOND_SWORD)).isEmpty(), "다이아몬드 검에 미리보기가 나옵니다");
+
+		// 꾸러미는 바닐라의 그림 그대로다. 컨테이너 내용물까지 넣어서 미리보기 조건이 맞게 해도 바닐라 그림이 우선한다.
+		ItemStack bundle = new ItemStack(Items.BUNDLE);
+		bundle.set(DataComponents.BUNDLE_CONTENTS, new BundleContents(List.of(diamonds.copy())));
+		check(tooltipImage(context, bundle).orElse(null) instanceof BundleTooltip, "내용물이 든 꾸러미의 툴팁 그림이 바닐라와 다릅니다: " + tooltipImage(context, bundle));
+		ItemStack bundleWithContainer = containerItem(Items.BUNDLE, diamonds, 0);
+		bundleWithContainer.set(DataComponents.BUNDLE_CONTENTS, new BundleContents(List.of(diamonds.copy())));
+		check(context.computeOnClient(minecraft -> Modules.CONTAINER_PREVIEW.preview(bundleWithContainer).isPresent()), "컨테이너 내용물을 넣은 꾸러미가 미리보기 조건에 맞지 않아 비교할 수 없습니다");
+		check(tooltipImage(context, bundleWithContainer).orElse(null) instanceof BundleTooltip, "바닐라가 그림을 준 아이템인데 미리보기로 바뀌었습니다: " + tooltipImage(context, bundleWithContainer));
+
+		// 셜커 상자가 아닌 컨테이너(상자)와, 내용물이 다시 컨테이너인 경우.
+		ContainerPreviewTooltip chest = containerPreview(context, containerItem(Items.CHEST, diamonds, 0));
+		check(chest != null && chest.slots().get(0).is(Items.DIAMOND), "내용물이 든 상자의 미리보기가 나오지 않습니다: " + chest);
+		ContainerPreviewTooltip nested = containerPreview(context, containerItem(Items.CHEST, shulker, 0));
+		check(nested != null && nested.slots().get(0).is(Items.SHULKER_BOX), "셜커 상자가 든 상자의 미리보기가 나오지 않습니다: " + nested);
+
+		// 격자가 내용물을 보여 주는 동안에는 같은 내용을 적은 글자 줄이 빠진다.
+		int shiftLines = tooltipLineCount(context, shulker);
+		check(shiftLines < plainLines, "Shift 를 눌러도 셜커 상자의 내용물 글자 줄이 남아 있습니다: " + plainLines + " → " + shiftLines);
+		// 검색 색인을 만드는 스레드처럼 렌더 스레드가 아닌 곳에서는 Shift 를 읽지 않고 바닐라 줄을 그대로 낸다.
+		int offThreadLines = CompletableFuture.supplyAsync(() -> shulker.getTooltipLines(Item.TooltipContext.EMPTY, null, TooltipFlag.NORMAL).size()).join();
+		check(offThreadLines == plainLines, "다른 스레드에서 만든 글자 줄이 Shift 없이 만든 것과 다릅니다: " + plainLines + " → " + offThreadLines);
+
+		// 모듈을 끄면 Shift 를 눌러도 바닐라 그대로다.
+		context.runOnClient(minecraft -> Modules.CONTAINER_PREVIEW.setEnabled(false));
+		check(tooltipImage(context, shulker).isEmpty(), "모듈을 껐는데 미리보기가 나옵니다");
+		check(tooltipLineCount(context, shulker) == plainLines, "모듈을 껐는데 셜커 상자의 글자 줄이 바뀌었습니다: " + plainLines + " → " + tooltipLineCount(context, shulker));
+		context.runOnClient(minecraft -> Modules.CONTAINER_PREVIEW.setEnabled(true));
+
+		// Shift 를 떼면 다시 바닐라 그대로다.
+		input.releaseShift();
+		check(tooltipImage(context, shulker).isEmpty(), "Shift 를 뗐는데 미리보기가 남아 있습니다");
+		check(tooltipLineCount(context, shulker) == plainLines, "Shift 를 뗐는데 셜커 상자의 글자 줄이 돌아오지 않았습니다: " + plainLines + " → " + tooltipLineCount(context, shulker));
+
+		// 여기부터는 화면으로 본다. 인벤토리의 첫 칸에 빨간 블록 7개가 든 셜커 상자를 넣고 그 칸에 커서를 올린다.
+		// 앞 검사가 아이템을 남겼으면 비운다. 이미 비어 있을 때 명령어를 보내면 실패 문구만 서버 로그에 남는다.
+		if (!context.computeOnClient(minecraft -> minecraft.player.getInventory().isEmpty())) {
+			server.runCommand("clear @a");
+			context.waitTicks(5);
+		}
+
+		server.runCommand("item replace entity @a inventory.0 with minecraft:shulker_box[container=[{slot:0,item:{id:\"minecraft:redstone_block\",count:7}}]]");
+		context.waitTicks(5);
+		check(context.computeOnClient(minecraft -> minecraft.player.getInventory().getItem(9).is(Items.SHULKER_BOX)), "인벤토리에 넣은 셜커 상자가 보이지 않아 비교할 수 없습니다");
+		context.runOnClient(minecraft -> {
+			minecraft.getToastManager().clear();
+			minecraft.setScreen(new InventoryScreen(minecraft.player));
+		});
+		context.waitForScreen(InventoryScreen.class);
+		// 인벤토리 창(176x166)은 화면 가운데에 있고, 첫 번째 인벤토리 칸은 창 안 (8, 84) 에서 시작한다. 그 칸의 가운데를 가리킨다.
+		int scale = context.computeOnClient(minecraft -> (int) minecraft.getWindow().getGuiScale());
+		int[] slotCenter = context.computeOnClient(minecraft -> new int[] {(minecraft.screen.width - 176) / 2 + 8 + 8, (minecraft.screen.height - 166) / 2 + 84 + 8});
+		input.setCursorPos(slotCenter[0] * scale, slotCenter[1] * scale);
+		context.waitTicks(3);
+		// 이 실행에서 격자를 그린 적이 아직 없다. Shift 없이 커서만 올린 지금도 그려지지 않아야 한다.
+		int[] before = context.computeOnClient(minecraft -> new int[] {ContainerPreviewTooltip.lastX(), ContainerPreviewTooltip.lastY()});
+		check(before[0] == -1 && before[1] == -1, "Shift 를 누르지 않았는데 미리보기 격자가 그려졌습니다: " + Arrays.toString(before));
+
+		input.holdShift();
+		context.waitTicks(3);
+		BufferedImage shown = readImage(context.takeScreenshot("container-preview"));
+		int[] grid = context.computeOnClient(minecraft -> new int[] {ContainerPreviewTooltip.lastX(), ContainerPreviewTooltip.lastY()});
+		input.releaseShift();
+		context.waitTicks(3);
+		BufferedImage plain = readImage(context.takeScreenshot("container-preview-off"));
+
+		// 정리: 화면을 닫고 인벤토리를 비운다 (Shift 는 위에서 뗐고 모듈은 켜 둔 그대로다).
+		context.runOnClient(minecraft -> minecraft.screen.onClose());
+		context.waitFor(minecraft -> minecraft.screen == null);
+		server.runCommand("clear @a");
+		context.waitTicks(5);
+
+		check(grid[0] >= 0 && grid[1] >= 0, "Shift 를 누른 채 셜커 상자에 커서를 올렸는데 미리보기 격자가 그려지지 않았습니다: " + Arrays.toString(grid));
+		// 격자의 칸은 18픽셀 간격이고 아이템은 칸 안쪽 (1, 1) 에 16x16 으로 그려진다. 툴팁 배경과 칸 배경은 색이 거의 없다.
+		int cell = 16 * scale;
+		int first = colorfulPixels(shown, (grid[0] + 1) * scale, (grid[1] + 1) * scale, cell, cell);
+		int ninth = colorfulPixels(shown, (grid[0] + 8 * 18 + 1) * scale, (grid[1] + 1) * scale, cell, cell);
+		int released = colorfulPixels(plain, (grid[0] + 1) * scale, (grid[1] + 1) * scale, cell, cell);
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 컨테이너 미리보기 — 격자 위치 {}, 색 있는 픽셀: 0번 칸 {}, 8번 칸 {}, Shift 를 뗀 뒤 0번 칸 자리 {} / 글자 줄 수: 평소 {}, Shift {}",
+			Arrays.toString(grid), first, ninth, released, plainLines, shiftLines);
+		check(first >= cell * cell / 4, "미리보기 격자의 0번 칸에 아이템이 그려지지 않았습니다: " + first + "픽셀");
+		check(ninth == 0, "비어 있는 8번 칸 자리에 그림이 있습니다: " + ninth + "픽셀");
+		check(released == 0, "Shift 를 뗐는데 0번 칸 자리에 그림이 남아 있습니다: " + released + "픽셀");
+	}
+
+	/** slots 에 적은 칸마다 content 가 들어 있는 컨테이너 아이템을 클라이언트에서 직접 만든다. */
+	private static ItemStack containerItem(Item item, ItemStack content, int... slots) {
+		List<ItemStack> items = new ArrayList<>(Collections.nCopies(Arrays.stream(slots).max().orElse(-1) + 1, ItemStack.EMPTY));
+
+		for (int slot : slots) {
+			items.set(slot, content);
+		}
+
+		ItemStack stack = new ItemStack(item);
+		stack.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(items));
+		return stack;
+	}
+
+	/** 렌더 스레드에서 물어본 툴팁 그림. Shift 가 눌렸는지는 렌더 스레드에서만 읽힌다. */
+	private static Optional<TooltipComponent> tooltipImage(ClientGameTestContext context, ItemStack stack) {
+		return context.computeOnClient(minecraft -> stack.getTooltipImage());
+	}
+
+	/** 툴팁 그림이 컨테이너 미리보기면 그 자료, 아니면 null. */
+	private static ContainerPreviewTooltip containerPreview(ClientGameTestContext context, ItemStack stack) {
+		return tooltipImage(context, stack).orElse(null) instanceof ContainerPreviewTooltip preview ? preview : null;
+	}
+
+	/** 렌더 스레드에서 만든 툴팁 글자 줄 수. */
+	private static int tooltipLineCount(ClientGameTestContext context, ItemStack stack) {
+		return context.computeOnClient(minecraft -> stack.getTooltipLines(Item.TooltipContext.EMPTY, null, TooltipFlag.NORMAL).size());
 	}
 
 	private static void testConfig(ClientGameTestContext context) {

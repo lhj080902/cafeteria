@@ -10,13 +10,15 @@
 		"FogRendererMixin",
 		"GameRendererMixin",
 		"GuiMixin",
+		"ItemStackMixin",
 		"KeyboardHandlerMixin",
 		"LightTextureMixin",
 		"MinecraftMixin",
 		"MouseHandlerMixin",
 		"ScreenEffectRendererMixin",
 		"ScreenMixin",
-		"ScreenshotMixin"
+		"ScreenshotMixin",
+		"ShulkerBoxBlockMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

@@ -135,5 +135,7 @@
 	"cafeteria.module.chat.desc": "채팅창 전체 배율",
 	"cafeteria.hud.sample.chat": "채팅 글자 크기 예시",
 	"cafeteria.module.inventory": "인벤토리",
-	"cafeteria.module.inventory.desc": "핫바를 뺀 인벤토리 27칸 표시"
+	"cafeteria.module.inventory.desc": "핫바를 뺀 인벤토리 27칸 표시",
+	"cafeteria.module.container_preview": "컨테이너 미리보기",
+	"cafeteria.module.container_preview.desc": "Shift 를 누르면 셜커 상자 내용물 표시"
 }

@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import io.github.lhj080902.cafeteria.config.ConfigManager;
 import io.github.lhj080902.cafeteria.gui.CafeteriaScreen;
+import io.github.lhj080902.cafeteria.gui.ContainerPreviewTooltip;
 import io.github.lhj080902.cafeteria.hud.CombatTracker;
 import io.github.lhj080902.cafeteria.hud.HudRenderer;
 import io.github.lhj080902.cafeteria.module.Module;
@@ -16,6 +17,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudLayerRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.IdentifiedLayer;
+import net.fabricmc.fabric.api.client.rendering.v1.TooltipComponentCallback;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -71,6 +73,8 @@ public class CafeteriaClient implements ClientModInitializer {
 					Modules.SCREENSHOT.copyByName(StringArgumentType.getString(context, "file"));
 					return 1;
 				}))))));
+		// 컨테이너 미리보기가 툴팁에 넣은 자료를 실제로 그리는 쪽과 이어 준다.
+		TooltipComponentCallback.EVENT.register(data -> data instanceof ContainerPreviewTooltip preview ? new ContainerPreviewTooltip.Renderer(preview) : null);
 		ClientLifecycleEvents.CLIENT_STOPPING.register(minecraft -> ConfigManager.save());
 		LOGGER.info("Cafeteria Client 로드 완료 (모듈 {}개)", Modules.ALL.size());
 	}
