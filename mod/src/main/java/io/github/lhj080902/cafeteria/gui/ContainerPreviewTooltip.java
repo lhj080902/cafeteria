@@ -9,6 +9,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemContainerContents;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.IntStream;
 
 /**
@@ -17,7 +18,7 @@ import java.util.stream.IntStream;
  */
 public record ContainerPreviewTooltip(List<ItemStack> slots, int rows) implements TooltipComponent {
 	/** 격자에 그릴 수 있는 칸 수 (큰 상자 크기). */
-	public static final int MAX_SLOTS = 54;
+	private static final int MAX_SLOTS = 54;
 	private static final int COLUMNS = 9;
 	private static final int MIN_ROWS = 3;
 	private static final int CELL = 18;
@@ -26,27 +27,26 @@ public record ContainerPreviewTooltip(List<ItemStack> slots, int rows) implement
 	private static int lastX = -1;
 	private static int lastY = -1;
 
-	/** 내용물을 칸 순서 그대로 담는다. 줄 수는 마지막으로 찬 칸까지 보이는 만큼이고, 셜커 상자 크기(3줄)보다 줄이지 않는다. */
-	public static ContainerPreviewTooltip of(ItemContainerContents contents) {
+	/**
+	 * 내용물을 칸 순서 그대로 담는다. 줄 수는 마지막으로 찬 칸까지 보이는 만큼이고, 셜커 상자 크기(3줄)보다 줄이지 않는다.
+	 * 54번 칸 이후에도 내용물이 있어서 격자에 다 못 그리면 빈 값을 준다.
+	 * 칸 번호는 내용물을 모두 복사해야만 알 수 있으므로, 여기서 한 번 복사한 것으로 칸도 세고 자료도 만든다.
+	 */
+	public static Optional<ContainerPreviewTooltip> of(ItemContainerContents contents) {
 		List<ItemStack> items = contents.stream().toList();
-		int rows = Mth.clamp(Mth.positiveCeilDiv(lastFilledSlot(items) + 1, COLUMNS), MIN_ROWS, MAX_SLOTS / COLUMNS);
-		List<ItemStack> slots = IntStream.range(0, rows * COLUMNS).mapToObj(slot -> slot < items.size() ? items.get(slot) : ItemStack.EMPTY).toList();
-		return new ContainerPreviewTooltip(slots, rows);
-	}
+		int lastFilled = items.size() - 1;
 
-	/** 마지막으로 찬 칸의 번호. 모두 비어 있으면 -1. */
-	public static int lastFilledSlot(ItemContainerContents contents) {
-		return lastFilledSlot(contents.stream().toList());
-	}
-
-	private static int lastFilledSlot(List<ItemStack> items) {
-		for (int slot = items.size() - 1; slot >= 0; slot--) {
-			if (!items.get(slot).isEmpty()) {
-				return slot;
-			}
+		while (lastFilled >= 0 && items.get(lastFilled).isEmpty()) {
+			lastFilled--;
 		}
 
-		return -1;
+		if (lastFilled >= MAX_SLOTS) {
+			return Optional.empty();
+		}
+
+		int rows = Mth.clamp(Mth.positiveCeilDiv(lastFilled + 1, COLUMNS), MIN_ROWS, MAX_SLOTS / COLUMNS);
+		List<ItemStack> slots = IntStream.range(0, rows * COLUMNS).mapToObj(slot -> slot < items.size() ? items.get(slot) : ItemStack.EMPTY).toList();
+		return Optional.of(new ContainerPreviewTooltip(slots, rows));
 	}
 
 	/** 마지막으로 그린 격자의 왼쪽 좌표. 아직 그린 적이 없으면 -1. */
