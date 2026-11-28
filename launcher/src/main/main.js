@@ -9,6 +9,7 @@ const { SETTINGS_EXTENSION, exportFlow, importFlow } = require('./client-setting
 const { EXTERNAL_HOSTS, LOADER_VERSION, MINECRAFT_VERSION, RELEASES_URL, USER_AGENT } = require('./constants');
 const { LauncherError } = require('./errors');
 const { quickStatus } = require('./game-files');
+const { createGameRunningCheck } = require('./game-running');
 const http = require('./http');
 const importer = require('./importer');
 const { createInFlight } = require('./in-flight');
@@ -116,8 +117,12 @@ function trackGame(child) {
   });
 }
 
-/** 바로 실행한 게임이 켜져 있는지. 게임이 쓰는 파일을 바꾸는 흐름(game-running.js 의 assertGameNotRunning)에 넘긴다. */
-const isGameRunning = () => game !== null;
+/**
+ * 게임이 켜져 있는지. 바로 실행한 게임뿐 아니라 런처가 띄우지 않은 게임(공식 런처로 켠 게임, 런처를 닫았다 다시 연 뒤에도
+ * 켜져 있는 게임)도 게임 폴더의 표지 파일로 알아본다. Promise 로 답하므로 직접 부를 때는 await 한다.
+ * 게임이 쓰는 파일을 바꾸는 흐름(game-running.js 의 assertGameNotRunning)에 넘긴다.
+ */
+const isGameRunning = createGameRunningCheck({ gameDir, child: () => game });
 
 /**
  * 자동 업데이트 관리자를 만든다. 설치 파일로 설치한 Windows 런처에서만 스스로 설치까지 하고,
@@ -470,13 +475,13 @@ function registerHandlers() {
   handle('game:play', play);
 
   handle('game:repair', () =>
-    exclusive(() => {
+    exclusive(async () => {
       if (launchMode() !== 'direct') {
         return install('repair', true);
       }
 
       // 실행 중인 게임이 쓰고 있는 파일을 바꾸지 않는다.
-      if (game) {
+      if (await isGameRunning()) {
         throw new LauncherError('GAME_RUNNING', '게임이 실행 중일 때는 설치를 복구할 수 없습니다. 게임을 끈 뒤 다시 시도해 주세요.');
       }
 
