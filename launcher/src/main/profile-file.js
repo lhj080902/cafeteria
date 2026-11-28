@@ -9,7 +9,8 @@ const { CAFETERIA_MOD_FILE_PREFIX, MINECRAFT_VERSION } = require('./constants');
 const { LauncherError } = require('./errors');
 
 /*
- * 모드 프로필 파일의 형식: 만들기(packProfile)와 읽기(readProfile). 무엇을 내보내고 어떻게 적용할지는 profile.js 가 정한다.
+ * 모드 프로필 파일의 형식: 만들기(packProfile)와 읽기(readProfile, parseProfile), 그리고 프로필로 들어온 jar 를 안전하게 열어 보기(readJarModId).
+ * 무엇을 내보내고 어떻게 적용할지는 profile.js 가 정한다.
  *
  * 프로필 파일은 zip 이다.
  *   profile.json           목록 (형식 번호, 이름, Minecraft 버전, 모드마다 종류·이름·해시·크기)
@@ -30,6 +31,12 @@ const LIMITS = {
   mods: 300,
   jarBytes: 100 * 1024 * 1024,
   settingsBytes: 1024 * 1024,
+  // 프로필로 들어온 jar 를 열어 볼 때 (readJarModId): 항목 수, 항목 이름의 길이, 폴더 깊이, 서로 다른 폴더 수, fabric.mod.json 의 크기
+  jarEntries: 65535,
+  jarNameLength: 1024,
+  jarDepth: 32,
+  jarFolders: 20000,
+  jarMetadataBytes: 1024 * 1024,
 };
 
 const FILE_FORMAT = 1;
@@ -48,8 +55,8 @@ const JAR_NAME_PATTERN = /^[^\\/:*?"<>|\u0000-\u001f]+\.jar$/i;
 const MAX_FILE_NAME_LENGTH = 255;
 /** zip 항목을 압축하지 않고 넣었다는 표시 (adm-zip 의 entry.header.method). */
 const ZIP_STORED = 0;
-/** zip 항목의 이름에 들어갈 수 있는 폴더 수. 프로필이 쓰는 항목에는 하나뿐이다 (mods/<파일 이름>, config/cafeteria.json). */
-const MAX_ENTRY_FOLDERS = 8;
+/** 프로필 zip 의 항목 이름에 들어갈 수 있는 폴더 깊이. 프로필이 쓰는 항목은 한 단계다 (mods/<파일 이름>, config/cafeteria.json). */
+const MAX_ENTRY_DEPTH = 8;
 
 const NOT_A_PROFILE = '올바른 Cafeteria 프로필 파일이 아닙니다.';
 const BAD_MOD_LIST = '프로필의 모드 목록이 올바르지 않습니다.';
@@ -57,6 +64,9 @@ const BAD_MOD_LIST = '프로필의 모드 목록이 올바르지 않습니다.';
 function badProfile(reason, details) {
   return new LauncherError('BAD_PROFILE', reason, details);
 }
+
+/** 열면 메모리를 한없이 쓰게 만들 수 있는 zip 을 만났을 때 던진다 (손상된 zip, zip 이 아닌 파일과 구분한다). */
+class UnsafeZipError extends Error {}
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -71,6 +81,11 @@ function text(value, maxLength = MAX_TEXT_LENGTH) {
 function profileName(value) {
   const name = typeof value === 'string' ? value.trim().slice(0, MAX_NAME_LENGTH).trim() : '';
   return name || DEFAULT_NAME;
+}
+
+/** 안내문에 넣을 파일 이름. 받은 값을 그대로 넣지 않는다: 글자가 아니면 빼고, 줄바꿈 같은 제어 문자를 지우고, 길면 자른다. */
+function shownName(value) {
+  return text(value, MAX_FILE_NAME_LENGTH).replace(/[\u0000-\u001f]/g, '');
 }
 
 /** mods 폴더 바로 아래에 둘 수 있는 jar 파일 이름인지. 경로가 섞인 이름과, 런처가 관리하는 Cafeteria 모드의 이름은 받지 않는다. */
@@ -114,35 +129,60 @@ function packProfile({ name, createdWith, mods, settings }) {
   return zip.toBuffer();
 }
 
-/** adm-zip 이 zip 항목의 이름을 읽을 때 쓰는 함수들 (기본값과 같은 UTF-8). 폴더가 너무 깊은 이름을 만나면 던져서 zip 읽기를 멈춘다. */
-const ENTRY_NAME_DECODER = {
-  efs: true,
-  encode: (name) => Buffer.from(name, 'utf8'),
-  decode: (data) => {
-    const name = data.toString('utf8');
-
-    if (name.split('/').length - 1 > MAX_ENTRY_FOLDERS) {
-      throw new Error('폴더가 너무 깊은 zip 항목');
-    }
-
-    return name;
-  },
-};
-
 /**
- * 받은 파일의 내용을 zip 으로 연다. 항목이 너무 많으면 던진다.
+ * 남이 만든 zip 을 연다. 한도를 넘는 zip 이면 UnsafeZipError 를 던진다 (항목 수는 여기서, 이름은 항목을 처음 찾을 때).
  *
  * adm-zip 은 항목을 처음 찾을 때 모든 항목의 머리를 읽으면서 항목 하나에 9KB 쯤을 쓰고, 이름에 든 폴더마다(a/b/c 면 a/ 와 a/b/)
  * 항목을 하나씩 더 만든다. 항목이 아주 많거나 폴더가 아주 깊은 zip 은 64KB 짜리로도 메모리를 1GB 넘게 쓰게 하므로,
- * 개수는 여기서 읽기 전에, 이름은 읽는 도중에(ENTRY_NAME_DECODER) 막는다.
+ * 개수는 읽기 전에, 이름은 adm-zip 이 읽는 도중에(이름을 글자로 바꿀 때 부르는 decode) 막는다.
+ *
+ * @param {Buffer} buffer
+ * @param {object} bounds
+ * @param {number} bounds.entries zip 끝에 적힌 항목 수의 한도
+ * @param {number} bounds.depth 항목 이름에 든 폴더 깊이의 한도
+ * @param {number} [bounds.nameLength] 항목 이름 길이의 한도
+ * @param {number} [bounds.folders] 서로 다른 폴더 수의 한도
  */
-function openZip(buffer, limits) {
-  const zip = new AdmZip(buffer, { decoder: ENTRY_NAME_DECODER });
+function openZip(buffer, { entries, depth, nameLength = Infinity, folders = Infinity }) {
+  const seenFolders = new Set();
+
+  // adm-zip 이 zip 항목의 이름을 읽고 쓸 때 부르는 함수들. 글자로 바꾸는 방법은 기본값과 같다 (UTF-8).
+  const decoder = {
+    efs: true,
+    encode: (name) => Buffer.from(name, 'utf8'),
+    decode: (data) => {
+      const name = data.toString('utf8');
+      const parts = name.split('/');
+
+      if (name.length > nameLength || parts.length - 1 > depth) {
+        throw new UnsafeZipError('이름이 너무 길거나 폴더가 너무 깊은 zip 항목');
+      }
+
+      const parent = name.slice(0, name.lastIndexOf('/') + 1);
+
+      // 처음 보는 폴더면 그 위의 폴더들까지 센다. 같은 폴더의 다른 항목은 다시 세지 않는다.
+      if (parent && !seenFolders.has(parent)) {
+        let folder = '';
+
+        for (const part of parts.slice(0, -1)) {
+          folder += `${part}/`;
+          seenFolders.add(folder);
+        }
+
+        if (seenFolders.size > folders) {
+          throw new UnsafeZipError('폴더가 너무 많은 zip');
+        }
+      }
+
+      return name;
+    },
+  };
+
+  const zip = new AdmZip(buffer, { decoder });
 
   // 아직 항목을 읽기 전이라 zip 끝에 적힌 개수가 나오고, adm-zip 은 그 개수만큼만 읽는다.
-  // 런처가 만든 프로필에는 profile.json, 설정, 파일째 넣은 모드만 들어 있다.
-  if (zip.getEntryCount() > limits.mods + 2) {
-    throw new Error('항목이 너무 많은 zip');
+  if (zip.getEntryCount() > entries) {
+    throw new UnsafeZipError('항목이 너무 많은 zip');
   }
 
   return zip;
@@ -157,15 +197,20 @@ function findEntry(zip, name) {
 }
 
 /**
+ * 압축하지 않은 항목인데 머리에 적힌 "풀린 크기"가 zip 에 든 크기와 다른지.
+ * adm-zip 은 이런 항목을 꺼낼 때 적힌 크기와 상관없이 zip 에 든 바이트를 그대로 돌려준다.
+ */
+function liesAboutSize({ header }) {
+  return header.method === ZIP_STORED && header.compressedSize !== header.size;
+}
+
+/**
  * zip 항목의 내용을 꺼낸다. 머리에 적힌 "풀린 크기"(entry.header.size)보다 큰 내용은 돌려주지 않는다.
  * 부르는 쪽이 그 크기를 먼저 확인하므로, 크기를 속인 항목이 확인한 것보다 많은 메모리를 쓰게 두면 안 된다.
  */
 function extractEntry(entry) {
-  const { header } = entry;
-
-  // 압축하지 않은 항목은 adm-zip 이 적힌 크기와 상관없이 zip 에 든 바이트를 그대로 돌려준다. 두 크기가 다르면 꺼내지 않는다.
-  if (header.method === ZIP_STORED && header.compressedSize !== header.size) {
-    throw new Error('적힌 크기와 들어 있는 크기가 다른 zip 항목');
+  if (liesAboutSize(entry)) {
+    throw new UnsafeZipError('적힌 크기와 들어 있는 크기가 다른 zip 항목');
   }
 
   // 압축한 항목은 adm-zip 이 적힌 크기까지만 풀고, 더 나오면 던진다 (adm-zip 의 methods/inflater.js, maxOutputLength).
@@ -189,8 +234,9 @@ function readJsonEntry(zip, name, maxBytes) {
  * @returns {{kind: 'modrinth' | 'file', title: string, version: string, fileName: string, sha1: string, size: number}[]}
  */
 function readMods(zip, list, limits) {
-  const hashes = new Set();
-  const names = new Set();
+  // 해시와 파일 이름(소문자) → 그것을 먼저 쓴 모드의 파일 이름
+  const hashes = new Map();
+  const names = new Map();
 
   return list.map((raw) => {
     if (!isPlainObject(raw) || !KINDS.includes(raw.kind) || typeof raw.sha1 !== 'string' || !SHA1_PATTERN.test(raw.sha1)) {
@@ -198,21 +244,27 @@ function readMods(zip, list, limits) {
     }
 
     if (!isAllowedFileName(raw.fileName)) {
-      throw badProfile('프로필에 쓸 수 없는 모드 파일 이름이 있습니다.');
+      const name = shownName(raw.fileName);
+      throw badProfile(name ? `프로필에 쓸 수 없는 모드 파일 이름이 있습니다: ${name}` : '프로필에 쓸 수 없는 모드 파일 이름이 있습니다.');
     }
 
-    if (!Number.isInteger(raw.size) || raw.size <= 0 || raw.size > limits.jarBytes) {
+    if (!Number.isInteger(raw.size) || raw.size <= 0) {
       throw badProfile(`프로필에 크기가 올바르지 않은 모드가 있습니다: ${raw.fileName}`);
     }
 
-    const mod = { kind: raw.kind, title: text(raw.title), version: text(raw.version), fileName: raw.fileName, sha1: raw.sha1.toLowerCase(), size: raw.size };
-
-    if (hashes.has(mod.sha1) || names.has(mod.fileName.toLowerCase())) {
-      throw badProfile(`프로필에 같은 모드가 두 번 들어 있습니다: ${mod.fileName}`);
+    if (raw.size > limits.jarBytes) {
+      throw badProfile(`프로필에 너무 큰 모드가 있습니다: ${raw.fileName}`);
     }
 
-    hashes.add(mod.sha1);
-    names.add(mod.fileName.toLowerCase());
+    const mod = { kind: raw.kind, title: text(raw.title), version: text(raw.version), fileName: raw.fileName, sha1: raw.sha1.toLowerCase(), size: raw.size };
+    const twin = hashes.get(mod.sha1) || names.get(mod.fileName.toLowerCase());
+
+    if (twin) {
+      throw badProfile(`프로필에 같은 모드가 두 번 들어 있습니다: ${twin}, ${mod.fileName}`);
+    }
+
+    hashes.set(mod.sha1, mod.fileName);
+    names.set(mod.fileName.toLowerCase(), mod.fileName);
 
     if (mod.kind === 'file') {
       // 파일째 넣은 모드는 항상 mods/<파일 이름> 에 있다. 내용은 적용할 때 꺼내고, 여기서는 머리에 적힌 크기만 본다.
@@ -228,44 +280,24 @@ function readMods(zip, list, limits) {
 }
 
 /**
- * 프로필 파일을 읽어 검사한다. 요약을 보여 줄 때와 적용할 때 모두 이것으로 읽어서 같은 규칙이 적용되게 한다.
+ * 프로필 파일의 내용을 검사한다. 요약을 보여 줄 때, 적용할 때, 내보내기 직전에 모두 이것으로 읽어서 같은 규칙이 적용되게 한다.
  * 규칙을 하나라도 어기면 BAD_PROFILE 로 거절한다.
  * zip 에서 읽는 항목은 profile.json, 파일째 넣은 모드의 mods/<파일 이름>, config/cafeteria.json 뿐이고 나머지는 풀지 않는다.
  *
- * @param {string} filePath
+ * @param {Buffer} buffer 프로필 파일의 내용
  * @param {typeof LIMITS} limits
- * @returns {Promise<{fingerprint: string, name: string, createdWith: string, settings: object | null, mods: object[], extractJar: (mod: object) => Buffer}>}
+ * @returns {{fingerprint: string, name: string, createdWith: string, settings: object | null, mods: object[], extractJar: (mod: object) => Buffer}}
  *   fingerprint: 파일 내용의 sha256, settings: 프로필에 든 Cafeteria 설정 (없으면 null),
  *   extractJar: 파일째 든 모드(kind 가 file)의 내용을 꺼낸다. 목록에 적힌 크기보다 크게 풀리는 항목이면 던진다.
  *   내용이 목록의 해시와 같은지는 부르는 쪽이 확인한다
  */
-async function readProfile(filePath, limits) {
-  let buffer;
-
-  try {
-    const info = await fsp.stat(filePath);
-
-    // 폴더나 장치처럼 보통 파일이 아닌 것은 stat 의 크기를 믿을 수 없으므로 읽지 않는다.
-    if (!info.isFile()) {
-      throw badProfile(NOT_A_PROFILE);
-    }
-
-    // 통째로 메모리에 올리기 전에 크기부터 본다.
-    if (info.size > limits.fileBytes) {
-      throw badProfile('프로필 파일이 너무 큽니다.');
-    }
-
-    buffer = await fsp.readFile(filePath);
-  } catch (error) {
-    throw error instanceof LauncherError ? error : badProfile('프로필 파일을 읽지 못했습니다.', { cause: error.code });
-  }
-
+function parseProfile(buffer, limits) {
   let zip;
   let manifest;
 
   try {
-    // 지문을 구하는 바로 그 내용으로 zip 을 연다. 파일을 다시 읽으면 그 사이에 바뀔 수 있다.
-    zip = openZip(buffer, limits);
+    // 런처가 만든 프로필에는 profile.json, 설정, 파일째 넣은 모드만 들어 있다.
+    zip = openZip(buffer, { entries: limits.mods + 2, depth: MAX_ENTRY_DEPTH });
     manifest = readJsonEntry(zip, MANIFEST_ENTRY, limits.manifestBytes);
   } catch {
     throw badProfile(NOT_A_PROFILE);
@@ -312,4 +344,76 @@ async function readProfile(filePath, limits) {
   };
 }
 
-module.exports = { PROFILE_EXTENSION, LIMITS, packProfile, readProfile };
+/**
+ * 프로필 파일을 읽어 검사한다 (parseProfile).
+ *
+ * @param {string} filePath
+ * @param {typeof LIMITS} limits
+ */
+async function readProfile(filePath, limits) {
+  let buffer;
+
+  try {
+    const info = await fsp.stat(filePath);
+
+    // 폴더나 장치처럼 보통 파일이 아닌 것은 stat 의 크기를 믿을 수 없으므로 읽지 않는다.
+    if (!info.isFile()) {
+      throw badProfile(NOT_A_PROFILE);
+    }
+
+    // 통째로 메모리에 올리기 전에 크기부터 본다.
+    if (info.size > limits.fileBytes) {
+      throw badProfile('프로필 파일이 너무 큽니다.');
+    }
+
+    buffer = await fsp.readFile(filePath);
+  } catch (error) {
+    throw error instanceof LauncherError ? error : badProfile('프로필 파일을 읽지 못했습니다.', { cause: error.code });
+  }
+
+  // 한 번 읽은 그 내용으로 지문도 구하고 zip 도 연다. 파일을 다시 읽으면 그 사이에 바뀔 수 있다.
+  return parseProfile(buffer, limits);
+}
+
+/**
+ * 프로필로 들어온 jar(파일째 든 것, 사이트에서 받은 것)의 모드 id 를 읽는다. mods.js 의 readMetadata 와 같은 값을 돌려주지만
+ * 한도부터 본다: readMetadata 는 jar 를 그대로 adm-zip 에 넘기므로, 작게 꾸민 jar 하나로 런처가 멈추거나 죽는다 (openZip 의 설명).
+ *
+ * @param {Buffer} data jar 의 내용
+ * @param {typeof LIMITS} limits
+ * @returns {string | undefined} fabric.mod.json 의 id. Fabric 모드가 아니거나 읽을 수 없는 파일이면 undefined
+ * @throws {UnsafeZipError} 한도를 넘는 jar. 이런 jar 는 mods 폴더에 넣지 않는다 (넣으면 모드 목록이 그것을 한도 없이 연다)
+ */
+function readJarModId(data, limits) {
+  try {
+    const zip = openZip(data, { entries: limits.jarEntries, depth: limits.jarDepth, nameLength: limits.jarNameLength, folders: limits.jarFolders });
+
+    // 모드 목록은 fabric.mod.json 말고도 그것이 가리키는 아이콘을 꺼낸다. 어느 항목이든 크기를 속였으면 받지 않는다.
+    if (zip.getEntries().some(liesAboutSize)) {
+      throw new UnsafeZipError('적힌 크기와 들어 있는 크기가 다른 항목이 있는 jar');
+    }
+
+    // readMetadata 와 같은 방법으로 찾는다. 같은 항목을 보고 있어야 여기서 본 크기가 의미가 있다.
+    const entry = zip.getEntry('fabric.mod.json');
+
+    if (!entry) {
+      return undefined;
+    }
+
+    if (entry.header.size > limits.jarMetadataBytes) {
+      throw new UnsafeZipError('fabric.mod.json 이 너무 큰 jar');
+    }
+
+    const { id } = JSON.parse(extractEntry(entry).toString('utf8'));
+    return typeof id === 'string' ? id : undefined;
+  } catch (error) {
+    if (error instanceof UnsafeZipError) {
+      throw error;
+    }
+
+    // zip 이 아니거나 손상된 파일. readMetadata 도 이런 파일을 모드 id 가 없는 것으로 본다.
+    return undefined;
+  }
+}
+
+module.exports = { PROFILE_EXTENSION, LIMITS, packProfile, parseProfile, readProfile, readJarModId };

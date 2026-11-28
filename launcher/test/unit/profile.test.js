@@ -52,16 +52,21 @@ function fakeModrinth() {
     lookups: [],
     downloads: [],
 
-    /** 파일을 Modrinth 에 올라와 있는 것으로 만든다. otherFiles 는 같은 버전에 든 다른 파일들(이 파일보다 앞에 놓인다). */
-    add(file, { projectId = 'P1', versionId = 'V1', otherFiles = [] } = {}) {
+    /**
+     * 파일을 Modrinth 에 올라와 있는 것으로 만든다. otherFiles 는 같은 버전에 든 다른 파일들(이 파일보다 앞에 놓인다).
+     * size 는 Modrinth 가 알려 주는 파일 크기 (기본값은 실제 크기, null 이면 알려 주지 않는다).
+     */
+    add(file, { projectId = 'P1', versionId = 'V1', otherFiles = [], size } = {}) {
       const data = fs.readFileSync(file);
       const url = `https://cdn.modrinth.com/data/${projectId}/versions/${versionId}/${path.basename(file)}`;
+      const listed = { filename: path.basename(file), url, primary: true, hashes: { sha1: sha1(data), sha512: sha512(data) }, size: size === undefined ? data.length : size };
+
+      if (size === null) {
+        delete listed.size;
+      }
+
       contents.set(url, data);
-      versions.set(sha1(data), {
-        id: versionId,
-        project_id: projectId,
-        files: [...otherFiles, { filename: path.basename(file), url, primary: true, hashes: { sha1: sha1(data), sha512: sha512(data) } }],
-      });
+      versions.set(sha1(data), { id: versionId, project_id: projectId, files: [...otherFiles, listed] });
       return url;
     },
 
@@ -136,13 +141,15 @@ function receiverWorld(t) {
 }
 
 /**
- * 바꿀 것이 종류별로 하나씩 있는 받는 쪽: 예전 버전의 B(바뀔 것), 꺼져 있는 A(켜질 것), 프로필에 없는 D(꺼질 것).
- * disableOthers 로 적용하면 파일을 네 번 옮긴다: 예전 B 를 치우고, 새 B 를 넣고, A 를 켜고, D 를 끈다.
+ * 바꿀 것이 종류별로 하나씩 있는 받는 쪽: 예전 버전의 B(바뀔 것), 꺼져 있는 A(켜질 것), 켜져 있는 A 의 예전 버전(꺼질 것),
+ * 프로필에 없는 D(꺼질 것).
+ * disableOthers 로 적용하면 파일을 다섯 번 옮긴다: 예전 B 를 치우고, 새 B 를 넣고, A 를 켜고, A 의 예전 버전을 끄고, D 를 끈다.
  */
 async function busyReceiver(t, profile) {
   const receiver = receiverWorld(t);
   receiver.oldB = receiver.jar('beta-1.0.jar', { id: 'beta', name: 'Beta', version: '1.0' });
   fs.copyFileSync(profile.files.a, path.join(receiver.modsDir, 'alpha-1.0.jar.disabled'));
+  receiver.jar('alpha-0.9.jar', { id: 'alpha', name: 'Alpha', version: '0.9' });
   receiver.jar('delta-1.0.jar', { id: 'delta', name: 'Delta', version: '1.0' });
   await receiver.manager.record('beta-1.0.jar', { source: 'local' });
   await receiver.manager.record('delta-1.0.jar', { source: 'modrinth', projectId: 'PD', versionId: 'VD', title: 'Delta' });
@@ -278,6 +285,43 @@ function patchUncompressedSize(buffer, entryName, size) {
   throw new Error(`zip 에 ${entryName} 항목이 없다`);
 }
 
+/**
+ * 내용 없이 항목 목록(중앙 디렉터리)만 있는 zip. 항목이 아주 많거나 이름이 아주 긴 zip 을 작게 만들 때 쓴다.
+ * 항목이 65,535개를 넘으면 zip64 로 적는다.
+ */
+function listingOnlyZip(names) {
+  const central = Buffer.concat(names.map((name) => {
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(Buffer.byteLength(name), 28);
+    return Buffer.concat([header, Buffer.from(name)]);
+  }));
+  const zip64 = names.length > 0xffff;
+  const tail = [];
+
+  if (zip64) {
+    const record = Buffer.alloc(56);
+    record.writeUInt32LE(0x06064b50, 0);
+    record.writeBigUInt64LE(44n, 4);
+    record.writeBigUInt64LE(BigInt(names.length), 24);
+    record.writeBigUInt64LE(BigInt(names.length), 32);
+    record.writeBigUInt64LE(BigInt(central.length), 40);
+    const locator = Buffer.alloc(20);
+    locator.writeUInt32LE(0x07064b50, 0);
+    locator.writeBigUInt64LE(BigInt(central.length), 8);
+    locator.writeUInt32LE(1, 16);
+    tail.push(record, locator);
+  }
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(zip64 ? 0xffff : names.length, 8);
+  end.writeUInt16LE(zip64 ? 0xffff : names.length, 10);
+  end.writeUInt32LE(zip64 ? 0xffffffff : central.length, 12);
+  end.writeUInt32LE(zip64 ? 0xffffffff : 0, 16);
+  return Buffer.concat([central, ...tail, end]);
+}
+
 /** at 번째 호출(1부터)에서만, 또는 from 번째 호출부터 계속 EBUSY 로 실패하는 rename. 나머지는 실제로 옮긴다. */
 function failingRename({ at, from }) {
   const rename = async (source, target) => {
@@ -369,7 +413,8 @@ test('너무 큰 jar 는 넣지 않는다', async (t) => {
   );
   assert.deepEqual(fs.readdirSync(path.dirname(sender.filePath)), []);
 
-  // 한도와 크기가 같으면 넣는다. Modrinth 에서 받을 모드(A)의 크기는 따지지 않는다.
+  // 한도와 크기가 같으면 넣는다. (Modrinth 에서 받을 모드가 한도보다 큰 경우는 '읽지 못할 프로필은 내보내지 않는다' 에서 본다.)
+  fs.rmSync(sender.files.a);
   const result = await exportFrom(sender, { limits: { ...LIMITS, jarBytes: sizeOfB } });
   assert.deepEqual(result.embedded, ['beta-2.0.jar']);
 });
@@ -552,12 +597,10 @@ test('프로필에 없는 모드를 끈다', async (t) => {
   replacing.jar('delta-1.0.jar', { id: 'delta', name: 'Delta', version: '1.0' });
   // 프로필에 있는 A 는 이미 켜져 있다. 그대로 켜 둔다.
   fs.copyFileSync(profile.files.a, path.join(replacing.modsDir, 'alpha-1.0.jar'));
-  // 내용은 달라도 모드 id 가 프로필의 모드(A)와 같은 파일은 "프로필에 없는 모드"로 치지 않는다.
-  replacing.jar('alpha-other.jar', { id: 'alpha', name: 'Alpha', version: '0.9' });
   const result = await applyTo(replacing, profile, { disableOthers: true });
   assert.deepEqual(result, { installed: ['beta-2.0.jar'], present: 1, replaced: [], disabled: ['delta-1.0.jar'], settingsApplied: false });
   // 기본 모드는 프로필에 없어도 켜 둔다.
-  assert.deepEqual(Object.keys(tree(replacing.modsDir)), ['alpha-1.0.jar', 'alpha-other.jar', 'beta-2.0.jar', CAFETERIA_JAR, 'delta-1.0.jar.disabled', FABRIC_API_JAR]);
+  assert.deepEqual(Object.keys(tree(replacing.modsDir)), ['alpha-1.0.jar', 'beta-2.0.jar', CAFETERIA_JAR, 'delta-1.0.jar.disabled', FABRIC_API_JAR]);
 
   const adding = receiverWorld(t);
   adding.jar('delta-1.0.jar', { id: 'delta', name: 'Delta', version: '1.0' });
@@ -706,6 +749,12 @@ test('악성 프로필을 거절한다', async (t) => {
   // 다른 Minecraft 버전용이면 그 버전을 알려 준다.
   craftProfile(filePath, { manifest: { minecraft: '1.20.1' } });
   await assert.rejects(inspectProfile({ filePath, modManager: receiver.manager }), errorWith('BAD_PROFILE', { include: ['1.20.1'] }));
+
+  // 쓸 수 없는 파일 이름은 어느 것인지 알려 주되, 줄바꿈 같은 제어 문자는 빼고 255자에서 자른다.
+  craftProfile(filePath, { mods: [listed({ fileName: 'evil\n\u0000name.jar' })] });
+  await assert.rejects(inspectProfile({ filePath, modManager: receiver.manager }), errorWith('BAD_PROFILE', { include: ['evilname.jar'], exclude: ['\n', '\u0000'] }));
+  craftProfile(filePath, { mods: [listed({ fileName: `${'n'.repeat(300)}.jar` })] });
+  await assert.rejects(inspectProfile({ filePath, modManager: receiver.manager }), errorWith('BAD_PROFILE', { include: ['n'.repeat(255)], exclude: ['n'.repeat(256)] }));
 
   // 거절하는 동안 Modrinth 에 묻거나 받은 것이 없다.
   assert.deepEqual(site.lookups, []);
@@ -931,10 +980,12 @@ test('프로필 안에 같은 모드가 둘이면 거절한다', async (t) => {
   fs.copyFileSync(first, path.join(receiver.modsDir, 'twin-1.0.jar'));
   await assertRefused(receiver, () => applyProfile({ filePath, modManager: receiver.manager, gameDir: receiver.gameDir }), refused);
 
-  // 겹치는 것이 없으면 모드 id 가 없는 파일 둘도 함께 들어간다.
-  craftProfile(filePath, { mods: [{ jar: second }, { jar: single }, { jar: plainOne }, { jar: plainTwo }] });
+  // 겹치는 것이 없으면 모드 id 가 없는 파일 둘도 함께 들어간다. id 가 글자가 아닌 것도 모드 id 가 없는 것으로 본다 (모드 목록과 같다).
+  const oddOne = makeJar(path.join(stash, 'odd-1.jar'), { id: 7, name: 'Odd', version: '1' });
+  const oddTwo = makeJar(path.join(stash, 'odd-2.jar'), { id: 7, name: 'Odd', version: '2' });
+  craftProfile(filePath, { mods: [{ jar: second }, { jar: single }, { jar: plainOne }, { jar: plainTwo }, { jar: oddOne }, { jar: oddTwo }] });
   const result = await applyProfile({ filePath, modManager: receiver.manager, gameDir: receiver.gameDir });
-  assert.deepEqual(result.installed.sort(), ['plain-1.jar', 'plain-2.jar', 'single-1.0.jar', 'twin-2.0.jar']);
+  assert.deepEqual(result.installed.sort(), ['odd-1.jar', 'odd-2.jar', 'plain-1.jar', 'plain-2.jar', 'single-1.0.jar', 'twin-2.0.jar']);
   assert.deepEqual(result.replaced, ['twin-1.0.jar → twin-2.0.jar']);
 });
 
@@ -966,11 +1017,17 @@ test('Modrinth 버전에 파일이 여럿이면 해시가 같은 것을 받는�
 test('옮기는 도중 실패하면 되돌린다', async (t) => {
   const profile = await exportedProfile(t);
 
-  // 실패하지 않으면 파일을 네 번 옮긴다.
+  // 실패하지 않으면 파일을 다섯 번 옮긴다.
   const counting = failingRename({});
   const succeeded = await applyTo(await busyReceiver(t, profile), profile, { disableOthers: true, rename: counting });
-  assert.deepEqual(succeeded, { installed: ['beta-2.0.jar'], present: 1, replaced: ['beta-1.0.jar → beta-2.0.jar'], disabled: ['delta-1.0.jar'], settingsApplied: false });
-  assert.equal(counting.calls, 4);
+  assert.deepEqual(succeeded, {
+    installed: ['beta-2.0.jar'],
+    present: 1,
+    replaced: ['beta-1.0.jar → beta-2.0.jar'],
+    disabled: ['alpha-0.9.jar', 'delta-1.0.jar'],
+    settingsApplied: false,
+  });
+  assert.equal(counting.calls, 5);
 
   for (let at = 1; at <= counting.calls; at += 1) {
     const receiver = await busyReceiver(t, profile);
@@ -1124,7 +1181,321 @@ test('고른 뒤 파일이 바뀌면 적용하지 않는다', async (t) => {
   const current = await inspectProfile({ filePath: profile.filePath, modManager: receiver.manager });
   assert.notEqual(current.fingerprint, fingerprint);
   const result = await applyTo(receiver, swapped, { filePath: profile.filePath, expectedFingerprint: current.fingerprint });
-  assert.deepEqual(result.installed.sort(), ['beta-2.0.jar', 'zeta-1.0.jar']);
+  assert.ok(result.installed.includes('zeta-1.0.jar'));
+  assert.ok(fs.existsSync(path.join(receiver.modsDir, 'zeta-1.0.jar')));
+});
+
+test('읽지 못할 프로필은 내보내지 않는다', async (t) => {
+  const refused = async (sender, include, options) => {
+    await assert.rejects(
+      exportFrom(sender, options),
+      errorWith('PROFILE_EXPORT_INVALID', { include: ['지금 모드 구성으로는 프로필을 만들 수 없습니다. ', ...include] }),
+    );
+    // 내보낸 파일도, 쓰다 만 임시 파일도 없다.
+    assert.deepEqual(fs.readdirSync(path.dirname(sender.filePath)), []);
+  };
+
+  // 0바이트 jar 가 켜져 있다.
+  const withEmpty = senderWorld(t);
+  fs.writeFileSync(path.join(withEmpty.manager.modsDir, 'empty.jar'), '');
+  await refused(withEmpty, ['empty.jar']);
+
+  // 내용이 똑같은 jar 둘이 켜져 있다. 어느 둘인지 알려 준다.
+  const withTwins = senderWorld(t);
+  fs.copyFileSync(withTwins.files.b, path.join(withTwins.manager.modsDir, 'beta-copy.jar'));
+  await refused(withTwins, ['beta-2.0.jar', 'beta-copy.jar']);
+
+  // 런처가 관리하는 Cafeteria 모드의 이름을 쓰는 다른 모드
+  const withImpostor = senderWorld(t);
+  withImpostor.jar('cafeteria-client-fan.jar', { id: 'fan', name: 'Fan', version: '1.0' });
+  await refused(withImpostor, ['cafeteria-client-fan.jar']);
+
+  // 받는 쪽이 받지 않을 만큼 큰 사이트 모드
+  const withLarge = senderWorld(t);
+  fs.rmSync(withLarge.files.b);
+  await refused(withLarge, ['alpha-1.0.jar'], { limits: { ...LIMITS, jarBytes: sizeOf(withLarge.files.a) - 1 } });
+
+  // 켜 둔 모드가 한도보다 많다. Modrinth 에 묻기 전에 알린다.
+  const withMany = senderWorld(t);
+  await refused(withMany, ['최대 1개'], { limits: { ...LIMITS, mods: 1 } });
+  assert.deepEqual(withMany.site.lookups, []);
+  // 한도와 꼭 같은 수는 된다.
+  assert.equal((await exportFrom(withMany, { limits: { ...LIMITS, mods: 2 } })).mods, 2);
+
+  // 정상 구성으로 만든 프로필은 받는 쪽이 읽는다.
+  const sender = senderWorld(t);
+  writeGameSettings(sender.gameDir, SETTINGS);
+  await exportFrom(sender, { includeSettings: true });
+  const info = await inspectProfile({ filePath: sender.filePath, modManager: receiverWorld(t).manager });
+  assert.deepEqual(info.mods.map((mod) => mod.fileName), ['alpha-1.0.jar', 'beta-2.0.jar']);
+  assert.equal(info.hasSettings, true);
+});
+
+test('합이 너무 크면 jar 를 읽기 전에 거절한다', async (t) => {
+  const sender = senderWorld(t);
+  const second = sender.jar('local-1.0.jar', { id: 'local', name: 'Local', version: '1.0' });
+  const sum = sizeOf(sender.files.b) + sizeOf(second);
+  const readFile = t.mock.method(fsp, 'readFile');
+  // 해시는 흘려 읽으며 구하므로(sha1OfFile) 여기에 잡히지 않는다. 잡히는 것은 프로필에 넣으려고 통째로 읽는 것이다.
+  const jarsRead = () => readFile.mock.calls.map((call) => String(call.arguments[0])).filter((file) => file.startsWith(sender.manager.modsDir));
+
+  // 하나씩은 한도 안이지만 둘을 더하면 넘는다.
+  await assert.rejects(
+    exportFrom(sender, { limits: { ...LIMITS, fileBytes: sum - 1 } }),
+    errorWith('PROFILE_TOO_LARGE', { include: ['프로필 파일이 너무 큽니다'], exclude: ['beta-2.0.jar', 'local-1.0.jar'] }),
+  );
+  assert.deepEqual(fs.readdirSync(path.dirname(sender.filePath)), []);
+  assert.deepEqual(jarsRead(), []);
+
+  // 합이 한도와 꼭 같으면 미리 거절하지 않는다: 둘 다 읽어 보고, 다 만든 zip 이 넘쳐서 거절한다.
+  await assert.rejects(exportFrom(sender, { limits: { ...LIMITS, fileBytes: sum } }), errorWith('PROFILE_TOO_LARGE', { include: ['프로필 파일이 너무 큽니다'] }));
+  assert.equal(jarsRead().length, 2);
+  assert.deepEqual(fs.readdirSync(path.dirname(sender.filePath)), []);
+  readFile.mock.resetCalls();
+
+  // 넘지 않으면 둘 다 읽어서 넣는다.
+  assert.deepEqual((await exportFrom(sender)).embedded, ['beta-2.0.jar', 'local-1.0.jar']);
+  assert.deepEqual(jarsRead().map((file) => path.basename(file)).sort(), ['beta-2.0.jar', 'local-1.0.jar']);
+});
+
+test('해시를 구한 뒤 jar 가 바뀌면 실제로 넣은 내용의 해시와 크기를 적는다', async (t) => {
+  const sender = senderWorld(t);
+  const changed = Buffer.from('해시를 구한 뒤에 바뀐 내용');
+  const readFile = fsp.readFile;
+  // 프로필에 넣으려고 B 를 통째로 읽을 때는 내용이 바뀌어 있다.
+  t.mock.method(fsp, 'readFile', (file, ...rest) => (String(file) === sender.files.b ? Promise.resolve(changed) : readFile(file, ...rest)));
+
+  assert.deepEqual((await exportFrom(sender)).embedded, ['beta-2.0.jar']);
+
+  const { sha1: listedSha1, size } = manifestOf(sender.filePath).mods.find((mod) => mod.fileName === 'beta-2.0.jar');
+  assert.deepEqual({ sha1: listedSha1, size }, { sha1: sha1(changed), size: changed.length });
+  assert.deepEqual(new AdmZip(sender.filePath).getEntry('mods/beta-2.0.jar').getData(), changed);
+});
+
+test('사이트가 알려 준 크기가 너무 크면 받지 않는다', async (t) => {
+  const profile = await exportedProfile(t);
+  const receiver = receiverWorld(t);
+
+  // Modrinth 가 A 의 크기를 한도보다 크게 알려 준다.
+  const site = fakeModrinth();
+  site.add(profile.files.a, { projectId: 'PA', versionId: 'VA', size: LIMITS.jarBytes + 1 });
+  await assertRefused(
+    receiver,
+    () => applyTo(receiver, profile, { identifyFiles: site.identifyFiles, download: site.download }),
+    errorWith('PROFILE_MODS_UNAVAILABLE', { include: ['alpha-1.0.jar'], exclude: ['beta-2.0.jar'] }),
+  );
+  assert.equal(site.downloads.length, 0);
+
+  // 크기를 알려 주지 않으면 받은 뒤에 본다: 받은 파일이 한도보다 크면 쓰지 않는다.
+  const silent = fakeModrinth();
+  silent.add(profile.files.a, { projectId: 'PA', versionId: 'VA', size: null });
+  const filePath = craftProfile(path.join(tempDir(t), `받은 프로필.${PROFILE_EXTENSION}`), { mods: [{ jar: profile.files.a, kind: 'modrinth', size: 1 }] });
+  const limits = { ...LIMITS, jarBytes: sizeOf(profile.files.a) - 1 };
+  await assertRefused(
+    receiver,
+    () => applyProfile({ filePath, modManager: receiver.manager, gameDir: receiver.gameDir, identifyFiles: silent.identifyFiles, download: silent.download, limits }),
+    errorWith('PROFILE_MODS_UNAVAILABLE', { include: ['alpha-1.0.jar'] }),
+  );
+  assert.equal(silent.downloads.length, 1);
+
+  // 한도 안이면 크기를 알려 주지 않아도 받는다.
+  const result = await applyTo(receiver, profile, { identifyFiles: silent.identifyFiles, download: silent.download });
+  assert.deepEqual(result.installed.sort(), ['alpha-1.0.jar', 'beta-2.0.jar']);
+
+  // 알려 준 크기도 받은 크기도 한도와 꼭 같으면 받는다.
+  const another = receiverWorld(t);
+  const exact = await applyTo(another, profile, { limits: { ...LIMITS, jarBytes: sizeOf(profile.files.a) } });
+  assert.deepEqual(exact.installed.sort(), ['alpha-1.0.jar', 'beta-2.0.jar']);
+});
+
+test('열기 위험한 jar 는 받지 않는다', async (t) => {
+  // adm-zip 은 항목마다, 이름에 든 폴더마다 큰 객체를 만든다. 이런 jar 를 그대로 열면 작은 파일 하나로 런처가 멈추거나 죽는다.
+  const stash = tempDir(t);
+  const filePath = path.join(stash, `받은 프로필.${PROFILE_EXTENSION}`);
+  const receiver = receiverWorld(t);
+  const readMetadata = t.mock.method(receiver.manager, 'readMetadata');
+
+  const heavy = new AdmZip();
+  heavy.addFile('fabric.mod.json', Buffer.from(JSON.stringify({ id: 'heavy', name: 'Heavy', version: '1.0', description: 'x'.repeat(LIMITS.jarMetadataBytes) })));
+  const lyingZip = new AdmZip();
+  lyingZip.addFile('fabric.mod.json', Buffer.from(JSON.stringify({ id: 'lying', name: 'Lying', version: '1.0' }))).header.method = 0;
+  const lying = lyingZip.toBuffer();
+  patchUncompressedSize(lying, 'fabric.mod.json', 10);
+  // 모드 목록은 fabric.mod.json 이 가리키는 아이콘도 꺼낸다. 적힌 크기는 작지만 든 것은 큰 아이콘.
+  const iconZip = new AdmZip();
+  iconZip.addFile('fabric.mod.json', Buffer.from(JSON.stringify({ id: 'icon', name: 'Icon', version: '1.0', icon: 'icon.png' })));
+  iconZip.addFile('icon.png', crypto.randomBytes(4096)).header.method = 0;
+  const lyingIcon = iconZip.toBuffer();
+  patchUncompressedSize(lyingIcon, 'icon.png', 16);
+
+  const jars = {
+    '항목 70,000개': listingOnlyZip(Array.from({ length: 70000 }, (_, index) => `f${index}`)),
+    '이름이 65,535바이트인 겹친 폴더 한 항목': listingOnlyZip([`${'a/'.repeat(32767)}f`]),
+    '서로 다른 폴더 25,000개': listingOnlyZip(Array.from({ length: 25000 }, (_, index) => `d${index}/f`)),
+    'fabric.mod.json 의 적힌 크기가 한도 초과': heavy.toBuffer(),
+    '압축하지 않은 fabric.mod.json 의 적힌 크기가 든 크기와 다름': lying,
+    '압축하지 않은 아이콘의 적힌 크기가 든 크기와 다름': lyingIcon,
+  };
+
+  // 기본 한도로 본다.
+  for (const [name, data] of Object.entries(jars)) {
+    craftProfile(filePath, { mods: [{ data, fileName: 'danger.jar' }] });
+
+    await assertRefused(
+      receiver,
+      () => applyProfile({ filePath, modManager: receiver.manager, gameDir: receiver.gameDir }),
+      errorWith('PROFILE_MODS_UNAVAILABLE', { include: ['danger.jar'] }),
+      name,
+    );
+  }
+
+  // 사이트에서 받은 jar 도 똑같이 본다.
+  const site = fakeModrinth();
+  const fromSite = path.join(stash, 'danger-from-site.jar');
+  fs.writeFileSync(fromSite, jars['서로 다른 폴더 25,000개']);
+  site.add(fromSite);
+  craftProfile(filePath, { mods: [{ jar: fromSite, kind: 'modrinth' }] });
+
+  await assertRefused(
+    receiver,
+    () => applyProfile({ filePath, modManager: receiver.manager, gameDir: receiver.gameDir, identifyFiles: site.identifyFiles, download: site.download }),
+    errorWith('PROFILE_MODS_UNAVAILABLE', { include: ['danger-from-site.jar'] }),
+  );
+  assert.equal(site.downloads.length, 1);
+
+  // 준비한 jar 는 readMetadata 에 넘기지 않는다. 넘기는 것은 mods 폴더에 원래 있던 파일뿐이다.
+  const read = readMetadata.mock.calls.map((call) => path.basename(call.arguments[0]));
+  assert.deepEqual(read.filter((name) => name.startsWith('danger')), []);
+  assert.ok(read.includes(FABRIC_API_JAR));
+});
+
+test('한도 안의 큰 jar 는 받는다', async (t) => {
+  const stash = tempDir(t);
+  // 보통 모드처럼 생긴 jar: 항목 3,000개, 폴더 깊이 12.
+  const zip = new AdmZip();
+  const folder = Array.from({ length: 11 }, (_, level) => `p${level}`).join('/');
+  zip.addFile('fabric.mod.json', Buffer.from(JSON.stringify({ id: 'bulk', name: 'Bulk', version: '2.0' })));
+
+  for (let index = 0; index < 3000; index += 1) {
+    zip.addFile(`${folder}/g${index % 60}/C${index}.class`, Buffer.from(`class ${index}`));
+  }
+
+  const bulk = path.join(stash, 'bulk-2.0.jar');
+  zip.writeZip(bulk);
+  const receiver = receiverWorld(t);
+  receiver.jar('bulk-1.0.jar', { id: 'bulk', name: 'Bulk', version: '1.0' });
+  const filePath = craftProfile(path.join(stash, `받은 프로필.${PROFILE_EXTENSION}`), { mods: [{ jar: bulk }] });
+
+  const result = await applyProfile({ filePath, modManager: receiver.manager, gameDir: receiver.gameDir });
+
+  // 모드 id 를 읽어 냈으므로 같은 모드의 예전 버전이 바뀐다.
+  assert.deepEqual(result, { installed: ['bulk-2.0.jar'], present: 0, replaced: ['bulk-1.0.jar → bulk-2.0.jar'], disabled: [], settingsApplied: false });
+  assert.equal(sha1OfFile(path.join(receiver.modsDir, 'bulk-2.0.jar')), sha1OfFile(bulk));
+});
+
+test('jar 를 여는 한도는 그 값까지 받는다', async (t) => {
+  const filePath = path.join(tempDir(t), `받은 프로필.${PROFILE_EXTENSION}`);
+  const metadata = JSON.stringify({ id: 'edge', name: 'Edge', version: '1.0' });
+  const longest = `a/b/c/${'y'.repeat(18)}`;
+
+  const jarOf = (names, json = metadata) => {
+    const zip = new AdmZip();
+    zip.addFile('fabric.mod.json', Buffer.from(json));
+
+    for (const name of names) {
+      zip.addFile(name, Buffer.from('x'));
+    }
+
+    return zip.toBuffer();
+  };
+
+  // 한도에 꼭 맞는 jar: 항목 4개, 가장 긴 이름 24자, 폴더 깊이 3, 서로 다른 폴더 4개 (a/, a/b/, a/b/c/, d/)
+  const limits = { ...LIMITS, jarEntries: 4, jarNameLength: longest.length, jarDepth: 3, jarFolders: 4, jarMetadataBytes: Buffer.byteLength(metadata) };
+  const apply = (receiver, data) => {
+    craftProfile(filePath, { mods: [{ data, fileName: 'edge-1.0.jar' }] });
+    return applyProfile({ filePath, modManager: receiver.manager, gameDir: receiver.gameDir, limits });
+  };
+
+  // 한도 하나씩만 넘긴 jar
+  const over = {
+    '항목 하나 더': jarOf([longest, 'd/x', 'q', 'r']),
+    '이름 한 자 더': jarOf([`${longest}y`, 'd/x', 'q']),
+    '폴더 한 단계 더 (폴더 수는 그대로)': jarOf([longest, 'a/b/c/e/x', 'q']),
+    '폴더 하나 더 (항목 수는 그대로)': jarOf([longest, 'd/x', 'e/q']),
+    'fabric.mod.json 한 바이트 더': jarOf([longest, 'd/x', 'q'], `${metadata} `),
+  };
+  const receiver = receiverWorld(t);
+  receiver.jar('edge-0.9.jar', { id: 'edge', name: 'Edge', version: '0.9' });
+
+  for (const [name, data] of Object.entries(over)) {
+    await assertRefused(receiver, () => apply(receiver, data), errorWith('PROFILE_MODS_UNAVAILABLE', { include: ['edge-1.0.jar'] }), name);
+  }
+
+  // 꼭 맞는 jar 는 받고, 모드 id 도 읽어 낸다 (같은 모드의 예전 버전이 바뀐다).
+  const result = await apply(receiver, jarOf([longest, 'd/x', 'q']));
+  assert.deepEqual(result, { installed: ['edge-1.0.jar'], present: 0, replaced: ['edge-0.9.jar → edge-1.0.jar'], disabled: [], settingsApplied: false });
+});
+
+test('이미 있는 프로필 모드와 id 가 같은 다른 파일을 끈다', async (t) => {
+  const profile = await exportedProfile(t);
+  const record = { source: 'local', title: 'Alpha' };
+
+  // X v2 는 프로필의 A (같은 내용), X v1 은 같은 모드의 다른 파일이고 켜져 있다. 더 예전 버전(X v0)은 이미 꺼져 있다.
+  async function world({ enabled, oldName = 'alpha-0.9.jar' }) {
+    const receiver = receiverWorld(t);
+    fs.copyFileSync(profile.files.a, path.join(receiver.modsDir, enabled ? 'alpha-1.0.jar' : 'alpha-1.0.jar.disabled'));
+    receiver.hashOfOld = sha1OfFile(receiver.jar(oldName, { id: 'alpha', name: 'Alpha', version: '0.9' }));
+    receiver.hashOfOldest = sha1OfFile(receiver.jar('alpha-0.8.jar.disabled', { id: 'alpha', name: 'Alpha', version: '0.8' }));
+    await receiver.manager.record(oldName, record);
+    return receiver;
+  }
+
+  // 꺼져 있던 X v0 은 그대로 둔다.
+  const rest = (receiver) => ({
+    'alpha-0.8.jar.disabled': receiver.hashOfOldest,
+    'beta-2.0.jar': sha1OfFile(profile.files.b),
+    [CAFETERIA_JAR]: sha1OfFile(path.join(receiver.modsDir, CAFETERIA_JAR)),
+    [FABRIC_API_JAR]: sha1OfFile(path.join(receiver.modsDir, FABRIC_API_JAR)),
+  });
+
+  // X v2 가 꺼져 있었든 켜져 있었든, 프로필에 없는 모드를 끄라고 했든 아니든 같다.
+  for (const enabled of [false, true]) {
+    for (const disableOthers of [false, true]) {
+      const message = `enabled: ${enabled}, disableOthers: ${disableOthers}`;
+      const receiver = await world({ enabled });
+
+      const result = await applyTo(receiver, profile, { disableOthers });
+
+      assert.deepEqual(result, { installed: ['beta-2.0.jar'], present: 1, replaced: [], disabled: ['alpha-0.9.jar'], settingsApplied: false }, message);
+      assert.deepEqual(tree(receiver.modsDir), { 'alpha-0.9.jar.disabled': receiver.hashOfOld, 'alpha-1.0.jar': sha1OfFile(profile.files.a), ...rest(receiver) }, message);
+      // 지운 것이 아니라 끈 것이므로 출처 기록도 그대로다.
+      assert.deepEqual(readIndex(receiver.manager)['alpha-0.9.jar'], record, message);
+    }
+  }
+
+  // X v1 이 X v2 를 켤 이름을 쓰고 있어도 지우지 않는다: 둘의 자리를 바꾼다.
+  const counting = failingRename({});
+  const swapping = await world({ enabled: false, oldName: 'alpha-1.0.jar' });
+  const result = await applyTo(swapping, profile, { rename: counting });
+  assert.deepEqual(result, { installed: ['beta-2.0.jar'], present: 1, replaced: [], disabled: ['alpha-1.0.jar'], settingsApplied: false });
+  assert.deepEqual(tree(swapping.modsDir), { 'alpha-1.0.jar': sha1OfFile(profile.files.a), 'alpha-1.0.jar.disabled': swapping.hashOfOld, ...rest(swapping) });
+
+  // 자리를 바꾸다 어디서 실패하든 둘 다 제자리로 돌아온다.
+  for (let at = 1; at <= counting.calls; at += 1) {
+    const failing = await world({ enabled: false, oldName: 'alpha-1.0.jar' });
+    await assertRefused(failing, () => applyTo(failing, profile, { rename: failingRename({ at }) }), { code: 'FILE_IN_USE' }, `${at}번째에서 실패`);
+  }
+
+  // X v1 이 새로 넣을 모드(B)의 이름을 쓰고 있으면 B 에 자리를 내준다. 그 이름으로 들어온 B 를 X v1 인 줄 알고 끄면 안 된다.
+  const named = await world({ enabled: true, oldName: 'beta-2.0.jar' });
+  assert.deepEqual(await applyTo(named, profile), {
+    installed: ['beta-2.0.jar'],
+    present: 1,
+    replaced: ['beta-2.0.jar → beta-2.0.jar'],
+    disabled: [],
+    settingsApplied: false,
+  });
+  assert.deepEqual(tree(named.modsDir), { 'alpha-1.0.jar': sha1OfFile(profile.files.a), ...rest(named) });
 });
 
 test('inspectProfile 은 있는 것과 없는 것을 구분한다', async (t) => {
@@ -1196,9 +1567,9 @@ test('켤 자리와 끌 자리에 있던 파일도 지우지 않고 치워 두�
 
   function world() {
     const receiver = receiverWorld(t);
-    // 프로필의 A 는 꺼져 있고, 켠 이름은 같은 모드의 다른 버전이 쓰고 있다.
+    // 프로필의 A 는 꺼져 있고, 켠 이름은 이름만 같은 다른 모드가 쓰고 있다.
     fs.copyFileSync(profile.files.a, path.join(receiver.modsDir, 'alpha-1.0.jar.disabled'));
-    receiver.otherAlpha = receiver.jar('alpha-1.0.jar', { id: 'alpha', name: 'Alpha', version: '0.9' });
+    receiver.jar('alpha-1.0.jar', { id: 'squatter', name: 'Squatter', version: '1.0' });
     // 프로필에 없는 D 는 켜져 있고, 끈 이름은 예전에 꺼 둔 다른 파일이 쓰고 있다.
     receiver.delta = receiver.jar('delta-1.0.jar', { id: 'delta', name: 'Delta', version: '1.0' });
     receiver.jar('delta-1.0.jar.disabled', { id: 'delta', name: 'Delta', version: '0.5' });
@@ -1291,6 +1662,10 @@ test('Modrinth 실제 서버로 왕복', live, async (t) => {
   });
   assert.deepEqual(exported, { mods: 1, embedded: [], hasSettings: false });
   assert.deepEqual(zipEntryNames(filePath), ['profile.json']);
+
+  // 적용할 때 "너무 큰 파일은 받지 않는다"가 기대는 값: Modrinth 는 파일 크기를 size 로 알려 준다.
+  const listed = (await modrinth.identifyFiles([file.hashes.sha1]))[file.hashes.sha1].files.find((candidate) => candidate.hashes.sha1 === file.hashes.sha1);
+  assert.equal(listed.size, sizeOf(path.join(sender.modsDir, file.fileName)));
 
   // download 를 주지 않으면 실제 http.download 로 받는다.
   const applied = await applyProfile({ filePath, modManager: receiver, gameDir: receiver.gameDir, disableOthers: false, applySettings: false, identifyFiles: modrinth.identifyFiles });

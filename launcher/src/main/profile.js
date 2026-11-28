@@ -9,7 +9,7 @@ const { LauncherError } = require('./errors');
 const { exists, writeFileAtomic } = require('./fs-util');
 const http = require('./http');
 const { baseName, sha1OfFile } = require('./mods');
-const { LIMITS, PROFILE_EXTENSION, packProfile, readProfile } = require('./profile-file');
+const { LIMITS, PROFILE_EXTENSION, packProfile, parseProfile, readProfile, readJarModId } = require('./profile-file');
 
 /*
  * 모드 프로필: 켜 둔 모드 구성(원하면 게임 안 Cafeteria 설정도)을 파일 하나로 내보내고, 그렇게 받은 파일을 게임 폴더에 적용한다.
@@ -37,6 +37,10 @@ function lookupFailed(error) {
   return new LauncherError('PROFILE_LOOKUP_FAILED', 'Modrinth 에서 모드 정보를 확인하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.', {
     cause: error.code,
   });
+}
+
+function exportInvalid(reason) {
+  return new LauncherError('PROFILE_EXPORT_INVALID', `지금 모드 구성으로는 프로필을 만들 수 없습니다. ${reason}`);
 }
 
 function sha1OfBuffer(data) {
@@ -89,46 +93,59 @@ async function readSettingsToExport(gameDir, limits) {
  * @returns {Promise<{mods: number, embedded: string[], hasSettings: boolean}>} embedded: 파일째 넣은 모드의 파일 이름
  */
 async function exportProfile({ modManager, gameDir, filePath, name, includeSettings, appVersion, identifyFiles, limits = LIMITS }) {
-  const targets = [];
+  const tooLarge = () => new LauncherError('PROFILE_TOO_LARGE', '프로필 파일이 너무 큽니다. 파일째 들어가는 모드를 줄여 주세요.');
+  const targets = (await modManager.list()).filter((mod) => mod.enabled && !mod.builtin && !mod.superseded);
 
-  for (const mod of await modManager.list()) {
-    if (mod.enabled && !mod.builtin && !mod.superseded) {
-      const file = path.join(modManager.modsDir, mod.fileName);
-      targets.push({ mod, file, sha1: await sha1OfFile(file) });
-    }
+  // 받는 쪽이 읽지 않을 만큼 많으면, 하나씩 해시를 구하고 읽어 넣기 전에 알린다.
+  if (targets.length > limits.mods) {
+    throw exportInvalid(`켜 둔 모드가 너무 많습니다 (최대 ${limits.mods}개).`);
+  }
+
+  const mods = [];
+
+  for (const mod of targets) {
+    const file = path.join(modManager.modsDir, mod.fileName);
+    mods.push({ kind: 'modrinth', title: mod.name, version: mod.version || '', fileName: mod.fileName, sha1: await sha1OfFile(file), size: mod.size, file });
   }
 
   let identified;
 
   try {
-    identified = await identifyFiles(targets.map((target) => target.sha1));
+    identified = await identifyFiles(mods.map((mod) => mod.sha1));
   } catch (error) {
     throw lookupFailed(error);
   }
 
-  const mods = [];
+  // Modrinth 에 없는 모드는 파일째 넣는다. 읽기 전에 크기부터 본다: 모드가 많은 폴더에서 다 읽고 나서야 넘친 것을 알면 늦다.
+  const embedded = mods.filter((mod) => !findModrinthFile(identified, mod.sha1));
+  const oversized = embedded.find((mod) => mod.size > limits.jarBytes);
 
-  for (const { mod, file, sha1 } of targets) {
-    const item = { kind: 'modrinth', title: mod.name, version: mod.version || '', fileName: mod.fileName, sha1, size: mod.size };
+  if (oversized) {
+    throw new LauncherError('PROFILE_TOO_LARGE', `프로필에 넣기에는 너무 큰 모드 파일이 있습니다: ${oversized.fileName}`);
+  }
 
-    if (!findModrinthFile(identified, sha1)) {
-      if (mod.size > limits.jarBytes) {
-        throw new LauncherError('PROFILE_TOO_LARGE', `프로필에 넣기에는 너무 큰 모드 파일이 있습니다: ${mod.fileName}`);
-      }
+  if (embedded.reduce((sum, mod) => sum + mod.size, 0) > limits.fileBytes) {
+    throw tooLarge();
+  }
 
-      const data = await fsp.readFile(file);
-      // 실제로 넣는 내용의 해시와 크기를 적는다. 해시를 구한 뒤에 파일이 바뀌었더라도 프로필 안에서는 서로 맞는다.
-      Object.assign(item, { kind: 'file', sha1: sha1OfBuffer(data), size: data.length, data });
-    }
-
-    mods.push(item);
+  for (const mod of embedded) {
+    const data = await fsp.readFile(mod.file);
+    // 실제로 넣는 내용의 해시와 크기를 적는다. 해시를 구한 뒤에 파일이 바뀌었더라도 프로필 안에서는 서로 맞는다.
+    Object.assign(mod, { kind: 'file', sha1: sha1OfBuffer(data), size: data.length, data });
   }
 
   const settings = includeSettings ? await readSettingsToExport(gameDir, limits) : null;
-  const content = packProfile({ name, createdWith: appVersion, mods, settings });
+  const content = packProfile({ name, createdWith: appVersion, mods: mods.map(({ file, ...mod }) => mod), settings });
 
   if (content.length > limits.fileBytes) {
-    throw new LauncherError('PROFILE_TOO_LARGE', '프로필 파일이 너무 큽니다. 파일째 들어가는 모드를 줄여 주세요.');
+    throw tooLarge();
+  }
+
+  try {
+    // 받는 사람이 읽지 못할 프로필을 내보내지 않도록, 받는 쪽과 같은 규칙으로 한 번 읽어 본다.
+    parseProfile(content, limits);
+  } catch (error) {
+    throw error.code === 'BAD_PROFILE' ? exportInvalid(error.message) : error;
   }
 
   try {
@@ -194,8 +211,9 @@ async function scanMods(modManager) {
 /**
  * mods 폴더에 없는 모드를 임시 폴더에 준비하고(item.staged) 그 jar 의 모드 id 를 읽는다(item.modId).
  * 준비하지 못한 모드에는 item.unavailable 을 표시하고 나머지를 계속 준비해서, 안 되는 것을 한 번에 알려 줄 수 있게 한다.
+ * 준비한 jar 는 남이 만든 것이므로 modManager.readMetadata 에 넘기지 않고, 한도를 보는 readJarModId 로만 연다.
  */
-async function stageMissingMods({ profile, items, temporary, modManager, identifyFiles, download, report }) {
+async function stageMissingMods({ profile, items, temporary, identifyFiles, download, limits, report }) {
   const missing = items.filter((item) => !item.present);
   const remote = missing.filter((item) => item.mod.kind === 'modrinth');
   let identified = {};
@@ -220,11 +238,18 @@ async function stageMissingMods({ profile, items, temporary, modManager, identif
         throw new Error('앞서 준비한 파일과 자리가 겹친다');
       }
 
+      let data;
+
       if (mod.kind === 'modrinth') {
         const found = findModrinthFile(identified, mod.sha1);
 
         if (!found) {
           throw new Error('Modrinth 에 그 파일이 없다');
+        }
+
+        // Modrinth 가 알려 준 크기가 한도를 넘으면 받지 않는다. 크기를 알려 주지 않았으면 받은 뒤에 본다.
+        if (found.file.size > limits.jarBytes) {
+          throw new Error('Modrinth 가 알려 준 크기가 너무 크다');
         }
 
         // 받을 주소는 Modrinth 가 알려 준 것만 쓴다. 허용된 호스트인지와 해시는 download 가 확인한다.
@@ -234,8 +259,15 @@ async function stageMissingMods({ profile, items, temporary, modManager, identif
           onProgress: (received, total) => progress(total > 0 ? received / total : 0),
         });
         item.version = found.version;
+
+        // 열어 보려면 통째로 읽어야 한다. 읽기 전에 실제 크기를 본다.
+        if ((await fsp.stat(staged)).size > limits.jarBytes) {
+          throw new Error('받은 파일이 너무 크다');
+        }
+
+        data = await fsp.readFile(staged);
       } else {
-        const data = profile.extractJar(mod);
+        data = profile.extractJar(mod);
 
         if (data.length !== mod.size || sha1OfBuffer(data) !== mod.sha1) {
           throw new Error('프로필에 든 파일이 목록에 적힌 것과 다르다');
@@ -244,7 +276,8 @@ async function stageMissingMods({ profile, items, temporary, modManager, identif
         await fsp.writeFile(staged, data);
       }
 
-      item.modId = modManager.readMetadata(staged, await fsp.stat(staged)).id;
+      // 열기에 안전하지 않은 jar 면 여기서 던진다.
+      item.modId = readJarModId(data, limits);
       item.staged = staged;
     } catch {
       item.unavailable = true;
@@ -342,66 +375,86 @@ function createJournal(rename) {
 }
 
 /**
- * 준비한 것으로 mods 폴더를 바꾼다: 새 jar 를 넣고(자리를 내준 파일은 임시 폴더의 replaced 로), 꺼져 있던 프로필 모드를 켜고,
- * disableOthers 면 프로필에 없는 모드를 끈다. 옮기는 일은 모두 journal 을 거친다.
+ * 준비한 것으로 mods 폴더를 바꾼다. 옮기는 일은 모두 journal 을 거친다.
+ *   a. 새 jar 를 넣는다 (자리를 내준 파일은 임시 폴더의 replaced 로).
+ *   b. 이미 있는 프로필 모드 가운데 꺼져 있던 것을 켜고, 그 모드와 모드 id 가 같은 다른 켜진 파일을 끈다.
+ *   c. disableOthers 면 프로필에 없는 모드를 끈다.
  *
  * @returns {Promise<{installed: string[], replaced: {old: string, new: string}[], disabled: string[]}>}
  */
 async function swapMods({ items, existing, modsDir, temporary, disableOthers, journal }) {
   const changes = { installed: [], replaced: [], disabled: [] };
+  const profileHashes = new Set(items.map((item) => item.mod.sha1));
   // 원래 자리를 떠난 기존 파일 (치워 둔 것, 이름을 바꾼 것)
   const moved = new Set();
+  const aside = (file) => path.join(temporary, REPLACED_DIRECTORY, file.fileName);
 
   async function displace(file, newName) {
     if (moved.has(file)) {
       return;
     }
 
-    await journal.move(path.join(modsDir, file.fileName), path.join(temporary, REPLACED_DIRECTORY, file.fileName));
+    await journal.move(path.join(modsDir, file.fileName), aside(file));
     moved.add(file);
     changes.replaced.push({ old: file.fileName, new: newName });
   }
 
-  async function place(item, from) {
+  /** 켜져 있던 파일을 끈 이름으로 옮긴다. from 은 그 파일이 지금 있는 곳. */
+  async function disable(file, from = path.join(modsDir, file.fileName)) {
+    const target = `${file.fileName}.disabled`;
+    // 예전에 꺼 둔 같은 이름의 파일이 있으면 그 파일이 자리를 내준다 (런처에서 모드를 끌 때와 같다).
+    const occupant = existing.find((other) => !moved.has(other) && sameName(other.fileName, target));
+
+    if (occupant) {
+      await displace(occupant, target);
+    }
+
+    await journal.move(from, path.join(modsDir, target));
+    moved.add(file);
+    changes.disabled.push(file.fileName);
+  }
+
+  for (const item of items.filter((candidate) => candidate.staged)) {
     for (const file of item.displaced) {
       await displace(file, item.target);
     }
 
-    await journal.move(from, path.join(modsDir, item.target));
-  }
-
-  for (const item of items.filter((candidate) => candidate.staged)) {
-    await place(item, item.staged);
+    await journal.move(item.staged, path.join(modsDir, item.target));
     changes.installed.push(item.target);
   }
 
+  // 이미 있는 프로필 모드와 모드 id 가 같은, 프로필에 없는 켜진 파일. 한 모드 id 에 켜진 파일이 둘이면 게임이 어느 쪽을 쓸지 알 수 없다.
+  // 같은 모드의 다른 버전일 뿐이므로 지우지 않고 끈다 (disableOthers 와 상관없이).
+  const presentModIds = new Set(items.filter((item) => item.present).map((item) => item.modId).filter(Boolean));
+  const rivals = existing.filter((file) => file.enabled && !moved.has(file) && !profileHashes.has(file.sha1) && presentModIds.has(file.modId));
+  // 끌 파일이 프로필 모드를 켤 이름을 쓰고 있으면 임시 폴더에 잠깐 두었다가, 그 모드를 켠 뒤에 끈 이름으로 돌려놓는다.
+  const parked = new Map();
+
   for (const item of items.filter((candidate) => candidate.present && !candidate.present.enabled)) {
-    await place(item, path.join(modsDir, item.present.fileName));
+    for (const file of item.displaced) {
+      if (rivals.includes(file)) {
+        await journal.move(path.join(modsDir, file.fileName), aside(file));
+        moved.add(file);
+        parked.set(file, aside(file));
+      } else {
+        await displace(file, item.target);
+      }
+    }
+
+    await journal.move(path.join(modsDir, item.present.fileName), path.join(modsDir, item.target));
     moved.add(item.present);
   }
 
+  for (const file of rivals) {
+    await disable(file, parked.get(file));
+  }
+
   if (disableOthers) {
-    const profileHashes = new Set(items.map((item) => item.mod.sha1));
-    const profileModIds = new Set(items.map((item) => item.modId).filter(Boolean));
-
+    // 프로필 모드와 모드 id 가 같은 다른 파일은 위에서 이미 자리를 내줬거나 꺼졌다. 남은 것은 프로필과 상관없는 모드다.
     for (const file of existing) {
-      const inProfile = profileHashes.has(file.sha1) || profileModIds.has(file.modId);
-
-      if (!file.enabled || moved.has(file) || inProfile || BUILTIN_MOD_IDS.includes(file.modId)) {
-        continue;
+      if (file.enabled && !moved.has(file) && !profileHashes.has(file.sha1) && !BUILTIN_MOD_IDS.includes(file.modId)) {
+        await disable(file);
       }
-
-      const target = `${file.fileName}.disabled`;
-      // 예전에 꺼 둔 같은 이름의 파일이 있으면 그 파일이 자리를 내준다 (런처에서 모드를 끌 때와 같다).
-      const occupant = existing.find((other) => !moved.has(other) && sameName(other.fileName, target));
-
-      if (occupant) {
-        await displace(occupant, target);
-      }
-
-      await journal.move(path.join(modsDir, file.fileName), path.join(modsDir, target));
-      moved.add(file);
-      changes.disabled.push(file.fileName);
     }
   }
 
@@ -475,7 +528,7 @@ async function applyProfile({
 
   try {
     await fsp.mkdir(path.join(temporary, REPLACED_DIRECTORY), { recursive: true });
-    await stageMissingMods({ profile, items, temporary, modManager, identifyFiles, download, report });
+    await stageMissingMods({ profile, items, temporary, identifyFiles, download, limits, report });
     rejectForbiddenMods(items);
     await planPlacements(items, existing, modsDir);
     const unavailable = items.filter((item) => item.unavailable);
