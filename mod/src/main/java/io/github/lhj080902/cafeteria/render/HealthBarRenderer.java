@@ -43,6 +43,17 @@ public final class HealthBarRenderer {
 	private static final double NAME_TAG_LIFT = 0.5;
 	/** 바닐라가 웅크린 상대의 이름표를 숨기기 시작하는 거리. */
 	private static final double SNEAK_RANGE = 32.0;
+	/**
+	 * 체력바 하나가 차지하는 깊이(z). 가까운 체력바일수록 이만큼씩 앞에 그린다.
+	 * 바닐라는 그림자 있는 글자의 본 글자를 0.03, 취소선을 0.04 앞에, 밑줄의 그림자를 0.01 뒤에 그린다.
+	 * 그 폭(0.05)보다 넉넉히 커야 가까운 체력바의 배경과 바가 먼 체력바의 글자를 덮는다.
+	 */
+	private static final float Z_STEP = 0.1F;
+	/**
+	 * 깊이를 따로 주는 체력바의 수. 다 써도 0.1 x 999 + 0.04 로 100 을 넘지 않아서, 200 앞에 있는 다음 HUD 층에 닿지 않는다.
+	 * 체력바가 이보다 많으면 넘는 만큼의 가장 먼 것들이 맨 뒤 깊이를 같이 쓴다. 게임 테스트가 그 경우를 만들 때도 쓴다.
+	 */
+	public static final int MAX_LAYERS = 1000;
 
 	/** 배치 (배율 적용 전 픽셀). 이름 줄은 0~9, 체력 줄은 그 아래 10~19 로 바닐라 이름과 머리 사이의 빈 곳에 들어간다. */
 	private static final int ROW_Y = 10;
@@ -83,7 +94,10 @@ public final class HealthBarRenderer {
 	private HealthBarRenderer() {
 	}
 
-	/** 마지막으로 그린 프레임의 체력바들 (그리지 않았으면 빈 목록). 게임 테스트가 자리를 확인할 때 쓴다. */
+	/**
+	 * 체력바 층이 마지막으로 돈 프레임에 그린 체력바들, 그린 순서대로 (그 프레임에 그린 것이 없으면 빈 목록).
+	 * F1 로 HUD 를 숨긴 동안에는 층이 돌지 않아서 그 전 프레임의 목록이 그대로 남는다. 게임 테스트가 자리를 확인할 때 쓴다.
+	 */
 	public static List<Drawn> lastDrawn() {
 		return lastDrawn;
 	}
@@ -212,12 +226,15 @@ public final class HealthBarRenderer {
 			}
 		}
 
-		// 먼 것부터 그려서 겹치면 가까운 것이 위에 오게 한다.
+		// 먼 것부터 그리되 가까운 것일수록 한 단계씩 앞(z)에 그려서, 겹치면 가까운 것이 위에 오게 한다.
+		// 순서만으로는 안 된다: GUI 는 깊이 검사를 하고 그림자 있는 글자는 본 글자가 조금 앞에 그려지므로,
+		// 모두 같은 깊이에 그리면 먼 체력바의 글자가 가까운 체력바의 배경과 바를 뚫고 보인다.
 		points.sort(Comparator.comparingDouble(Projected::depth).reversed());
+		int shared = Math.max(0, points.size() - MAX_LAYERS);
 		List<Drawn> drawn = new ArrayList<>();
 
-		for (Projected point : points) {
-			drawn.add(draw(graphics, minecraft.font, point));
+		for (int index = 0; index < points.size(); index++) {
+			drawn.add(draw(graphics, minecraft.font, points.get(index), Math.max(0, index - shared) * Z_STEP));
 		}
 
 		lastDrawn = List.copyOf(drawn);
@@ -240,20 +257,21 @@ public final class HealthBarRenderer {
 		return new Projected(entity, x, y, blockPixels * BLOCKS_PER_PIXEL * Modules.HEALTH_BAR.scale.asFloat(), clip.w);
 	}
 
-	/** 기준점을 위쪽 가운데로 해서 이름 줄과 체력 줄을 그리고, 그린 자리를 돌려준다. */
-	private static Drawn draw(GuiGraphics graphics, Font font, Projected point) {
+	/** 기준점을 위쪽 가운데로 해서 이름 줄과 체력 줄을 깊이 z 에 그리고, 그린 자리를 돌려준다. */
+	private static Drawn draw(GuiGraphics graphics, Font font, Projected point, float z) {
 		HealthBarModule module = Modules.HEALTH_BAR;
 		LivingEntity entity = point.entity();
 		float maxHealth = entity.getMaxHealth();
 		float ratio = Mth.clamp(entity.getHealth() / maxHealth, 0.0F, 1.0F);
 		// 살아 있는 대상만 그리므로, 체력이 아주 조금 남았어도 한 칸은 채워서 죽은 것처럼 보이지 않게 한다.
 		int filled = Math.max(1, Math.round(BAR_WIDTH * ratio));
-		// 흡수 체력은 플레이어만 서버가 알려 준다 (몹은 항상 0).
-		int absorbed = Math.round(BAR_WIDTH * Math.min(1.0F, entity.getAbsorptionAmount() / maxHealth));
+		// 흡수 체력은 플레이어만 서버가 알려 준다 (몹은 항상 0). 조금이라도 있으면 수치에 더해지므로 줄도 한 칸은 보이게 한다.
+		float absorption = entity.getAbsorptionAmount();
+		int absorbed = absorption > 0.0F ? Math.max(1, Math.round(BAR_WIDTH * Math.min(1.0F, absorption / maxHealth))) : 0;
 
 		// 이름은 서버가 보낸 그대로(팀 접두·접미, 색 포함) 쓴다.
 		Component name = module.showName.get() ? entity.getDisplayName() : null;
-		String number = module.showNumber.get() ? formatHealth(entity.getHealth() + entity.getAbsorptionAmount()) : null;
+		String number = module.showNumber.get() ? formatHealth(entity.getHealth() + absorption) : null;
 		String armor = module.showArmor.get() ? String.valueOf(entity.getArmorValue()) : null;
 		int nameWidth = name == null ? 0 : font.width(name);
 		// 체력 줄: 하트, 체력 수치, 체력바, 방어구 그림, 방어도. 끈 것은 그 앞의 간격까지 뺀다.
@@ -270,7 +288,7 @@ public final class HealthBarRenderer {
 
 		PoseStack pose = graphics.pose();
 		pose.pushPose();
-		pose.translate(point.x(), point.y(), 0.0F);
+		pose.translate(point.x(), point.y(), z);
 		pose.scale(scale, scale, 1.0F);
 		// 여기부터 (0, 0) 은 내용의 왼쪽 위다.
 		pose.translate(-width / 2.0F, 0.0F, 0.0F);
@@ -325,9 +343,9 @@ public final class HealthBarRenderer {
 		return ratio > 0.25F ? 0xFFE6C229 : 0xFFE0382B;
 	}
 
-	/** 소수 첫째 자리까지 반올림하고 ".0" 은 뗀다 (20, 17.5). */
+	/** 소수 첫째 자리까지 반올림하고 ".0" 은 뗀다 (20, 17.5). 서버가 0 보다 작은 값을 보내면 0 으로 적는다. */
 	private static String formatHealth(float value) {
-		long tenths = Math.round(value * 10.0);
+		long tenths = Math.round(Math.max(0.0F, value) * 10.0);
 		return tenths % 10 == 0 ? String.valueOf(tenths / 10) : tenths / 10 + "." + tenths % 10;
 	}
 }

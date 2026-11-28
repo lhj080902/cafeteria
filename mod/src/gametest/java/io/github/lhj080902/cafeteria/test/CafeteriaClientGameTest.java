@@ -50,6 +50,7 @@ import net.minecraft.util.Unit;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.Pig;
@@ -3186,6 +3187,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			check(absorption[2] >= filled[2] + 20, "흡수 체력 줄이 그 아래의 채운 색과 구별되지 않습니다: " + Arrays.toString(absorption) + " / " + Arrays.toString(filled));
 			check(withoutArmor < withArmor - 1, "방어도를 꺼도 플레이어 체력바의 전체 폭이 줄지 않습니다: " + withArmor + " → " + withoutArmor);
 
+			checkHealthBarOverlap(context, villagerId, fakeId);
+
 			// 웅크린 상대: 바닐라가 이름표를 숨기는 32칸 밖에서는 표시 거리가 더 길어도 띄우지 않는다.
 			// 앞 20칸, 위 30칸의 공중에 둔다 (카메라에서 약 35칸). 평지 월드라 사이에 블록이 없다.
 			context.runOnClient(minecraft -> {
@@ -3215,6 +3218,76 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 		context.waitTicks(3);
 		check(context.computeOnClient(minecraft -> minecraft.level.getEntity(fakeId)) == null, "가짜 플레이어가 지워지지 않았습니다");
+	}
+
+	/**
+	 * 겹친 체력바: 가까운 것이 먼 것의 글자까지 덮어야 한다. 가짜 플레이어를 주민(3칸 앞)과 나 사이 1.5칸 앞에 세우면 그 바가 주민의 이름 줄 위에 놓인다.
+	 * GUI 는 깊이 검사를 하고 그림자 있는 글자는 본 글자가 조금 앞에 그려지므로, 두 체력바를 같은 깊이에 그리면 먼 쪽의 흰 글자가 가까운 쪽의 바를 뚫고 보인다.
+	 * 가까운 쪽의 바 사각형은 불투명한 어두운 바탕과 채움 색뿐이라, 제대로 덮였으면 그 안에 흰 픽셀이 없다.
+	 * 주민에게는 바닐라 이름표가 없으므로, 그 자리에서 보이는 흰 글자는 우리가 그린 주민의 체력바뿐이다.
+	 * 같은 사각형을 두 장면과 비교한다: 둘이 같은 깊이를 쓰게 만든 장면(흰 글자가 뚫고 보여야 한다)과 먼 쪽만 그린 장면(흰 글자가 있어야 한다).
+	 * 들어올 때와 나갈 때 대상은 플레이어다.
+	 */
+	private static void checkHealthBarOverlap(ClientGameTestContext context, int villagerId, int fakeId) {
+		context.runOnClient(minecraft -> {
+			minecraft.level.getEntity(fakeId).moveTo(minecraft.player.getX(), minecraft.player.getY(), minecraft.player.getZ() + 1.5);
+			Modules.HEALTH_BAR.target.set("living");
+		});
+		context.waitTicks(5);
+		BufferedImage both = readImage(context.takeScreenshot("health-bar-overlap"));
+		HealthBarRenderer.Drawn near = healthBar(context, fakeId);
+		HealthBarRenderer.Drawn far = healthBar(context, villagerId);
+
+		// 대조 1: 두 체력바가 같은 깊이를 쓰면 먼 쪽의 글자가 뚫고 보이고, 아래의 픽셀 검사가 그것을 잡아낸다.
+		// 깊이를 따로 받는 체력바는 MAX_LAYERS 개까지라서, 그만큼의 대상을 더 가까이에 두면 가장 먼 둘(주민과 가짜 플레이어)이 맨 뒤 깊이를 같이 쓴다.
+		// 클라이언트에만 있는 돼지를 머리 위 20칸에 겹쳐 둔다. 카메라 앞쪽으로는 약 0.9칸이라 둘보다 가깝고, 화면에서는 위쪽 밖이라 장면을 가리지 않는다.
+		List<Integer> crowd = context.computeOnClient(minecraft -> {
+			List<Integer> ids = new ArrayList<>();
+
+			for (int index = 0; index < HealthBarRenderer.MAX_LAYERS; index++) {
+				Pig pig = new Pig(EntityType.PIG, minecraft.level);
+				pig.setSilent(true);
+				pig.moveTo(minecraft.player.getX(), minecraft.player.getY() + 20.0, minecraft.player.getZ() + 2.6);
+				minecraft.level.addEntity(pig);
+				ids.add(pig.getId());
+			}
+
+			return ids;
+		});
+		BufferedImage sameDepth;
+		int crowded;
+
+		try {
+			context.waitTicks(5);
+			sameDepth = readImage(context.takeScreenshot("health-bar-overlap-same-depth"));
+			crowded = healthBars(context).size();
+		} finally {
+			context.runOnClient(minecraft -> crowd.forEach(id -> minecraft.level.removeEntity(id, Entity.RemovalReason.DISCARDED)));
+		}
+
+		// 대조 2: 가까운 쪽을 등 뒤로 치우면 먼 쪽(주민)만 남는다. 같은 자리에 먼 쪽의 흰 글자가 실제로 있는지 본다.
+		context.runOnClient(minecraft -> minecraft.level.getEntity(fakeId).moveTo(minecraft.player.getX(), minecraft.player.getY(), minecraft.player.getZ() - 3.0));
+		context.waitTicks(5);
+		BufferedImage farOnly = readImage(context.takeScreenshot("health-bar-overlap-far-only"));
+		List<HealthBarRenderer.Drawn> remaining = healthBars(context);
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.target.set("players"));
+		check(near != null && far != null, "겹쳐 세운 플레이어와 주민의 체력바가 둘 다 그려지지 않았습니다: 플레이어 " + near + ", 주민 " + far);
+
+		// 가까운 쪽의 바 사각형에서 가장자리 1픽셀을 뺀 안쪽 (GUI 좌표: x, y, 너비, 높이).
+		int left = Mth.ceil(near.barLeft() + 1);
+		int top = Mth.ceil(near.barTop() + 1);
+		int[] inside = {left, top, Mth.floor(near.barRight() - 1) - left, Mth.floor(near.barBottom() - 1) - top};
+		int uncovered = whitePixels(context, farOnly, inside);
+		int bleeding = whitePixels(context, sameDepth, inside);
+		int covered = whitePixels(context, both, inside);
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 겹친 체력바 — 가까운 것 {} / 먼 것 {} / 가까운 바 사각형 안쪽 {} 의 흰 픽셀: 먼 것만 그렸을 때 {}, 둘이 같은 깊이를 쓸 때 {} (그린 체력바 {}개), 둘 다 제 깊이에 그렸을 때 {} / 돼지를 지운 뒤 그린 체력바 {}개",
+			near, far, Arrays.toString(inside), uncovered, bleeding, crowded, covered, remaining.size());
+		check(remaining.stream().noneMatch(drawn -> drawn.entityId() == fakeId || crowd.contains(drawn.entityId())),
+			"등 뒤로 옮긴 플레이어나 지운 돼지의 체력바가 아직 그려져서 비교할 수 없습니다: " + remaining.size() + "개");
+		check(uncovered >= 50, "먼 체력바의 글자가 가까운 체력바의 바 자리에 걸치지 않아 비교할 수 없습니다: 흰 픽셀 " + uncovered + "개");
+		check(crowded >= HealthBarRenderer.MAX_LAYERS + 2, "더 가까이에 둔 돼지들의 체력바가 다 그려지지 않아 두 체력바가 같은 깊이를 쓰지 않았습니다: " + crowded + "개");
+		check(bleeding >= 50, "같은 깊이를 쓰는 두 체력바에서 먼 쪽의 글자가 뚫고 보이지 않습니다. 이 픽셀 검사로는 그 경우를 잡아낼 수 없습니다: 흰 픽셀 " + bleeding + "개");
+		check(covered == 0, "먼 체력바의 글자가 가까운 체력바의 바를 뚫고 보입니다: 흰 픽셀 " + covered + "개");
 	}
 
 	/**
