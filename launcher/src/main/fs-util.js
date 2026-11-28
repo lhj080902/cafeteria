@@ -16,8 +16,15 @@ async function exists(file) {
 async function writeFileAtomic(file, content) {
   await fsp.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
-  await fsp.writeFile(temporary, content);
-  await fsp.rename(temporary, file);
+
+  try {
+    await fsp.writeFile(temporary, content);
+    await fsp.rename(temporary, file);
+  } catch (error) {
+    // 다 쓰지 못했거나 이름을 바꾸지 못하면(대상 자리에 폴더가 있는 경우 등) 임시 파일이 남는다. 지우고 원래 오류를 알린다.
+    await fsp.rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function readJson(file, fallback) {
