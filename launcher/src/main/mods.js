@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const AdmZip = require('adm-zip');
-const { BUILTIN_MOD_IDS, CAFETERIA_MOD_ID } = require('./constants');
+const { BUILTIN_MOD_IDS, CAFETERIA_MOD_ID, SUPERSEDED_MOD_IDS } = require('./constants');
 const { LauncherError } = require('./errors');
 const { exists, readJson, writeFileAtomic } = require('./fs-util');
 const http = require('./http');
@@ -118,6 +118,8 @@ class ModManager {
         icon: metadata.icon || info.iconUrl || null,
         source: info.source || 'local',
         builtin: BUILTIN_MOD_IDS.includes(metadata.id),
+        // Cafeteria 모드에 같은 기능이 들어 있어서 따로 켤 수 없는 모드
+        superseded: SUPERSEDED_MOD_IDS.includes(metadata.id),
       });
     }
 
@@ -247,7 +249,8 @@ class ModManager {
       const modId = this.readMetadata(source, stat).id;
 
       // Cafeteria 모드는 런처에 들어 있는 것을 쓴다. 따로 넣으면 같은 모드가 두 벌이 되어 게임이 켜지지 않는다.
-      if (modId === CAFETERIA_MOD_ID) {
+      // Cafeteria 모드에 같은 기능이 들어 있는 모드도 함께 켜면 겹치므로 받지 않는다.
+      if (modId === CAFETERIA_MOD_ID || SUPERSEDED_MOD_IDS.includes(modId)) {
         rejected.push(fileName);
         continue;
       }
@@ -316,6 +319,12 @@ class ModManager {
   async setEnabled(fileName, enabled) {
     const current = this.resolve(fileName);
     await this.assertNotBuiltin(current);
+
+    // 끄는 것은 막지 않는다. 이미 켜져 있는 것을 사용자가 직접 끌 수 있어야 한다.
+    if (enabled && (await this.isSuperseded(current))) {
+      throw new LauncherError('SUPERSEDED_MOD', '이 모드의 기능은 Cafeteria 에 들어 있어서 따로 켤 수 없습니다. 게임 안 Cafeteria 메뉴(오른쪽 Shift)에서 설정하세요.');
+    }
+
     const base = baseName(fileName);
     const target = path.join(this.modsDir, enabled ? base : `${base}.disabled`);
 
@@ -325,6 +334,39 @@ class ModManager {
     }
 
     return path.basename(target);
+  }
+
+  /**
+   * 켜져 있는 겹치는 모드(SUPERSEDED_MOD_IDS)를 꺼 둔다. 플레이 직전에 부른다.
+   * 파일 하나를 끄지 못해도(다른 프로그램이 잡고 있는 경우 등) 던지지 않고 그 파일만 건너뛴다.
+   * 그때는 모드 쪽이 내장 기능을 잠가서 겹치지 않게 한다.
+   *
+   * @returns {Promise<string[]>} 꺼 둔 파일의 끄기 전 이름
+   */
+  async disableSuperseded() {
+    const disabled = [];
+
+    for (const fileName of await this.fileNames()) {
+      if (fileName.toLowerCase().endsWith(DISABLED_SUFFIX)) {
+        continue;
+      }
+
+      try {
+        if (await this.isSuperseded(path.join(this.modsDir, fileName))) {
+          await this.setEnabled(fileName, false);
+          disabled.push(fileName);
+        }
+      } catch {
+        // 이 파일은 그대로 두고 다음 파일로 넘어간다.
+      }
+    }
+
+    return disabled;
+  }
+
+  /** mods 폴더의 파일이 Cafeteria 모드에 같은 기능이 들어 있는 모드(SUPERSEDED_MOD_IDS)인지. */
+  async isSuperseded(file) {
+    return SUPERSEDED_MOD_IDS.includes(this.readMetadata(file, await fsp.stat(file)).id);
   }
 
   async remove(fileName) {

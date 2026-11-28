@@ -446,6 +446,11 @@ async function play() {
     $('#play-progress').hidden = false;
     const result = await unwrap(api.play());
 
+    // Cafeteria 에 같은 기능이 들어 있는 모드는 런처가 플레이 전에 꺼 둔다. 사용자가 넣은 모드이므로 무엇을 껐는지 알려 준다.
+    if (result.superseded.length > 0) {
+      toast(`Cafeteria 에 같은 기능이 들어 있어서 따로 넣은 모드를 꺼 두었습니다: ${result.superseded.join(', ')}`);
+    }
+
     if (result.mode === 'direct') {
       $('#play-message').textContent = '게임을 실행했습니다.';
       // 게임이 끝날 때까지 이 문구를 둔다.
@@ -622,6 +627,13 @@ function modRow(mod, update) {
       },
     });
     toggle.checked = mod.enabled;
+    // Cafeteria 에 같은 기능이 들어 있는 모드는 다시 켤 수 없다. 켜져 있는 동안에는(아직 플레이 전) 끌 수 있게 둔다.
+    const locked = mod.superseded && !mod.enabled;
+    toggle.disabled = locked;
+
+    if (mod.superseded) {
+      actions.append(el('span', { className: 'chip warn', text: 'Cafeteria 에 내장' }));
+    }
 
     if (update) {
       const updateButton = el('button', {
@@ -652,7 +664,7 @@ function modRow(mod, update) {
     }
 
     actions.append(
-      el('label', { className: 'switch', attrs: { title: mod.enabled ? '끄기' : '켜기' } }, [toggle, el('span')]),
+      el('label', { className: 'switch', attrs: { title: locked ? 'Cafeteria 에 같은 기능이 들어 있어서 켤 수 없습니다' : mod.enabled ? '끄기' : '켜기' } }, [toggle, el('span')]),
       el('button', {
         className: 'button danger',
         text: '삭제',
@@ -690,7 +702,7 @@ function reportAdded(result) {
   }
 
   if (result.rejected.length > 0) {
-    toast(`추가하지 않았습니다 (jar 모드 파일이 아니거나, 런처가 관리하는 Cafeteria 모드):\n${result.rejected.join('\n')}`, 'error');
+    toast(`추가하지 않았습니다 (jar 모드 파일이 아니거나, 런처가 관리하는 Cafeteria 모드이거나, Cafeteria 에 같은 기능이 들어 있는 모드):\n${result.rejected.join('\n')}`, 'error');
   }
 
   refreshMods();

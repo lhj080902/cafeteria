@@ -68,7 +68,7 @@ contextBridge.exposeInMainWorld('cafeteria', {
   onProgress: (callback) => subscribe('progress', callback),
   /** 런처 업데이트 상태가 바뀔 때마다 받는다. */
   onUpdateState: (callback) => subscribe('update', callback),
-  /** 모드 목록의 정보(이름·아이콘)가 새로 채워졌을 때 받는다. */
+  /** 런처가 스스로 모드 목록을 바꿨을 때 받는다 (이름·아이콘이 새로 채워짐, 플레이 전에 겹치는 모드를 끔). */
   onModsUpdated: (callback) => subscribe('mods-updated', callback),
   /** 모드 업데이트 목록이 바뀔 때마다 받는다. */
   onModUpdates: (callback) => subscribe('mod-updates', callback),

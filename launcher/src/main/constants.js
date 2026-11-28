@@ -32,6 +32,12 @@ module.exports = {
   CAFETERIA_MOD_ID: 'cafeteria',
   CAFETERIA_MOD_FILE_PREFIX: 'cafeteria-client-',
 
+  /**
+   * Cafeteria 모드에 같은 기능이 들어 있어 함께 쓰면 안 되는 모드의 fabric.mod.json id (FastPack).
+   * 모드는 이 id 로만 알아본다. 런처는 이런 모드를 켜거나 추가하지 못하게 하고, 켜져 있으면 플레이 전에 꺼 둔다.
+   */
+  SUPERSEDED_MOD_IDS: ['fastpack'],
+
   USER_AGENT: 'CafeteriaLauncher/1.4.0',
 
   /** 새 버전 설치 파일이 올라오는 곳 (자동 업데이트를 지원하지 않는 실행 방식에서 안내하는 페이지). */

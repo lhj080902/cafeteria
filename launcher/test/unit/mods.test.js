@@ -219,25 +219,25 @@ test('Modrinth 에 연결하지 못하면 기록하지 않고 다음에 다시 �
 test('같은 모드의 새 파일을 넣으면 예전 파일(켜진 것, 꺼진 것)을 새 파일로 바꾼다', async (t) => {
   const manager = new ModManager(tempDir(t));
   const inbox = tempDir(t);
-  makeJar(path.join(manager.modsDir, 'fastpack-0.3.0.jar'), { id: 'fastpack', name: 'FastPack', version: '0.3.0' });
-  makeJar(path.join(manager.modsDir, 'fastpack-0.2.0.jar.disabled'), { id: 'fastpack', name: 'FastPack', version: '0.2.0' });
+  makeJar(path.join(manager.modsDir, 'homemade-0.3.0.jar'), { id: 'homemade', name: 'Homemade', version: '0.3.0' });
+  makeJar(path.join(manager.modsDir, 'homemade-0.2.0.jar.disabled'), { id: 'homemade', name: 'Homemade', version: '0.2.0' });
   makeJar(path.join(manager.modsDir, 'other-1.0.jar'), { id: 'other', name: '다른 모드', version: '1.0' });
-  await manager.record('fastpack-0.3.0.jar', { source: 'local' });
+  await manager.record('homemade-0.3.0.jar', { source: 'local' });
 
-  const result = await manager.addLocalFiles([makeJar(path.join(inbox, 'fastpack-0.3.1.jar'), { id: 'fastpack', name: 'FastPack', version: '0.3.1' })]);
+  const result = await manager.addLocalFiles([makeJar(path.join(inbox, 'homemade-0.3.1.jar'), { id: 'homemade', name: 'Homemade', version: '0.3.1' })]);
 
-  assert.deepEqual(result.added, ['fastpack-0.3.1.jar']);
+  assert.deepEqual(result.added, ['homemade-0.3.1.jar']);
   assert.deepEqual(result.rejected, []);
   assert.deepEqual(
     result.replaced.sort((a, b) => a.old.localeCompare(b.old)),
     [
-      { old: 'fastpack-0.2.0.jar.disabled', new: 'fastpack-0.3.1.jar' },
-      { old: 'fastpack-0.3.0.jar', new: 'fastpack-0.3.1.jar' },
+      { old: 'homemade-0.2.0.jar.disabled', new: 'homemade-0.3.1.jar' },
+      { old: 'homemade-0.3.0.jar', new: 'homemade-0.3.1.jar' },
     ],
   );
-  assert.deepEqual((await manager.fileNames()).sort(), ['fastpack-0.3.1.jar', 'other-1.0.jar']);
-  assert.equal((await manager.readIndex()).files['fastpack-0.3.0.jar'], undefined);
-  assert.deepEqual((await manager.list()).map((mod) => `${mod.name} ${mod.version}`).sort(), ['FastPack 0.3.1', '다른 모드 1.0']);
+  assert.deepEqual((await manager.fileNames()).sort(), ['homemade-0.3.1.jar', 'other-1.0.jar']);
+  assert.equal((await manager.readIndex()).files['homemade-0.3.0.jar'], undefined);
+  assert.deepEqual((await manager.list()).map((mod) => `${mod.name} ${mod.version}`).sort(), ['Homemade 0.3.1', '다른 모드 1.0']);
 });
 
 test('같은 이름의 파일을 다시 넣으면 덮어쓰고, Cafeteria 모드는 따로 넣을 수 없다', async (t) => {
@@ -256,4 +256,75 @@ test('같은 이름의 파일을 다시 넣으면 덮어쓰고, Cafeteria 모드
   assert.deepEqual(result.replaced, []);
   assert.deepEqual((await manager.fileNames()).sort(), ['cafeteria-client-1.2.0.jar', 'mymod.jar']);
   assert.equal((await manager.list()).find((mod) => mod.modId === 'mymod').version, '2.0');
+});
+
+test('겹치는 모드를 목록에 표시한다', async (t) => {
+  const { manager, modsDir } = setup(t);
+  makeJar(path.join(modsDir, 'fastpack-1.0.0.jar'), { id: 'fastpack', name: 'FastPack' });
+  makeJar(path.join(modsDir, 'sodium.jar'), { id: 'sodium', name: 'Sodium' });
+  makeJar(path.join(modsDir, 'cafeteria-client-1.5.0.jar'), { id: 'cafeteria', name: 'Cafeteria Client' });
+  makeJar(path.join(modsDir, 'not-fabric.jar'), null);
+
+  const superseded = Object.fromEntries((await manager.list()).map((mod) => [mod.fileName, mod.superseded]));
+  assert.deepEqual(superseded, {
+    'fastpack-1.0.0.jar': true,
+    'sodium.jar': false,
+    'cafeteria-client-1.5.0.jar': false,
+    'not-fabric.jar': false,
+  });
+});
+
+test('겹치는 모드는 켤 수 없다', async (t) => {
+  const { manager, modsDir } = setup(t);
+  makeJar(path.join(modsDir, 'fastpack-off.jar.disabled'), { id: 'fastpack', name: 'FastPack' });
+  makeJar(path.join(modsDir, 'fastpack-on.jar'), { id: 'fastpack', name: 'FastPack' });
+
+  await assert.rejects(manager.setEnabled('fastpack-off.jar.disabled', true), { code: 'SUPERSEDED_MOD' });
+  assert.deepEqual(fs.readdirSync(modsDir).sort(), ['fastpack-off.jar.disabled', 'fastpack-on.jar']);
+
+  // 끄기와 지우기는 막지 않는다
+  assert.equal(await manager.setEnabled('fastpack-on.jar', false), 'fastpack-on.jar.disabled');
+  await manager.remove('fastpack-off.jar.disabled');
+  assert.deepEqual(fs.readdirSync(modsDir), ['fastpack-on.jar.disabled']);
+});
+
+test('겹치는 모드는 추가하지 않는다', async (t) => {
+  const { manager, modsDir } = setup(t);
+  const inbox = tempDir(t);
+  const jar = makeJar(path.join(inbox, 'fastpack-1.0.0.jar'), { id: 'fastpack', name: 'FastPack' });
+
+  const result = await manager.addLocalFiles([jar]);
+  assert.deepEqual(result.added, []);
+  assert.deepEqual(result.rejected, ['fastpack-1.0.0.jar']);
+  assert.deepEqual(fs.readdirSync(modsDir), []);
+});
+
+test('disableSuperseded 는 켜진 것만 끈다', async (t) => {
+  const { manager, modsDir } = setup(t);
+  makeJar(path.join(modsDir, 'fastpack-on.jar'), { id: 'fastpack', name: 'FastPack' });
+  makeJar(path.join(modsDir, 'fastpack-off.jar.disabled'), { id: 'fastpack', name: 'FastPack' });
+  makeJar(path.join(modsDir, 'sodium.jar'), { id: 'sodium', name: 'Sodium' });
+
+  assert.deepEqual(await manager.disableSuperseded(), ['fastpack-on.jar']);
+  assert.deepEqual(fs.readdirSync(modsDir).sort(), ['fastpack-off.jar.disabled', 'fastpack-on.jar.disabled', 'sodium.jar']);
+  assert.deepEqual(await manager.disableSuperseded(), []);
+});
+
+test('disableSuperseded 는 이름을 바꾸지 못한 파일만 건너뛴다', async (t) => {
+  const fsp = require('node:fs/promises');
+  const { manager, modsDir } = setup(t);
+  makeJar(path.join(modsDir, 'fastpack-locked.jar'), { id: 'fastpack', name: 'FastPack' });
+  makeJar(path.join(modsDir, 'fastpack-other.jar'), { id: 'fastpack', name: 'FastPack' });
+  const rename = fsp.rename;
+  // 다른 프로그램이 jar 를 잡고 있을 때 Windows 가 내는 오류를 흉내 낸다.
+  t.mock.method(fsp, 'rename', async (from, to) => {
+    if (path.basename(from) === 'fastpack-locked.jar') {
+      throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+    }
+
+    return rename(from, to);
+  });
+
+  assert.deepEqual(await manager.disableSuperseded(), ['fastpack-other.jar']);
+  assert.deepEqual(fs.readdirSync(modsDir).sort(), ['fastpack-locked.jar', 'fastpack-other.jar.disabled']);
 });

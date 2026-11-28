@@ -373,8 +373,37 @@ function directOptions(scope) {
   };
 }
 
+/**
+ * Cafeteria 모드에 같은 기능이 들어 있는 모드가 켜져 있으면 꺼 둔다. 함께 켜지면 기능이 겹치기 때문에 플레이할 때마다 먼저 확인한다.
+ *
+ * @returns {Promise<string[]>} 꺼 둔 모드의 이름 (이름이 없는 모드는 파일 이름)
+ */
+async function disableSupersededMods() {
+  const manager = modManager();
+  const disabled = await manager.disableSuperseded();
+
+  if (disabled.length === 0) {
+    return [];
+  }
+
+  const mods = await manager.list();
+  const names = [];
+
+  for (const fileName of disabled) {
+    const mod = mods.find((candidate) => baseName(candidate.fileName) === fileName);
+    // 파일 이름이 바뀌었으니 보관해 둔 업데이트 정보도 새 이름을 따라가게 한다.
+    forgetModUpdate(fileName, mod ? mod.fileName : null);
+    names.push(mod ? mod.name : fileName);
+  }
+
+  send('mods-updated');
+  return names;
+}
+
 function play() {
   return exclusive(async () => {
+    const superseded = await disableSupersededMods();
+
     if (launchMode() === 'direct') {
       if (game) {
         throw new LauncherError('ALREADY_RUNNING', '게임이 이미 실행 중입니다.');
@@ -392,7 +421,7 @@ function play() {
         }, 8000);
       }
 
-      return { launched: true, mode: 'direct' };
+      return { launched: true, mode: 'direct', superseded };
     }
 
     // 공식 런처가 떠 있는 동안에는 프로필 파일을 바꿔도 반영되지 않을 수 있어서 미리 확인해 둔다.
@@ -408,7 +437,7 @@ function play() {
       setTimeout(() => app.quit(), 1500);
     }
 
-    return { launched: result.launched, wasRunning, mode: 'official' };
+    return { launched: result.launched, wasRunning, mode: 'official', superseded };
   });
 }
 
