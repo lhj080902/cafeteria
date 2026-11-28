@@ -2555,6 +2555,9 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	 */
 	private static void checkInventoryDefaultLayout(ClientGameTestContext context) {
 		context.runOnClient(minecraft -> {
+			// 알림(토스트)도 오른쪽 위에 뜬다. 스크린샷에서 인벤토리 HUD 를 가리지 않게 치운다.
+			minecraft.getToastManager().clear();
+
 			for (HudElement element : Modules.HUD) {
 				element.resetPosition();
 				element.scale.reset();
