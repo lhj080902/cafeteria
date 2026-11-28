@@ -64,7 +64,7 @@ public final class Modules {
 	public static final KeystrokesHud KEYSTROKES = new KeystrokesHud(RIGHT, 0.93);
 	public static final ComboHud COMBO = new ComboHud(0.5, 0.62);
 	public static final ReachHud REACH = new ReachHud(0.5, 0.68);
-	public static final InventoryHud INVENTORY = new InventoryHud(RIGHT, 0.62);
+	public static final InventoryHud INVENTORY = new InventoryHud(RIGHT, 0.005);
 	/** 바닐라가 그리는 HUD. 기본 자리는 바닐라가 정하고, 옮기거나 크기를 바꿨을 때만 손을 댄다. */
 	public static final TitleHud TITLE = new TitleHud();
 	public static final ScoreboardHud SCOREBOARD = new ScoreboardHud();

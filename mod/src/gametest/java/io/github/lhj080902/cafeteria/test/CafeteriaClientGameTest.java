@@ -1117,7 +1117,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	private static void testHudEditor(ClientGameTestContext context, TestInput input) {
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
-				// 인벤토리 HUD 는 넓어서 다른 요소와 겹친다. 아래 검사의 배치가 달라지지 않게 꺼 둔다 (testInventoryHud 가 따로 본다).
+				// 인벤토리 HUD 는 기본으로 꺼져 있다. 아래 검사의 배치가 달라지지 않게 여기서도 켜지 않는다 (testInventoryHud 가 따로 본다).
 				element.setEnabled(element != Modules.INVENTORY);
 				element.resetPosition();
 			}
@@ -2428,6 +2428,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		server.runCommand("clear @a");
 		context.waitTicks(5);
 		check(!context.computeOnClient(Modules.INVENTORY::hasContent), "인벤토리가 비어 있는데 인벤토리 HUD 가 표시됩니다");
+		checkInventoryDefaultLayout(context);
 
 		// 핫바의 아이템은 세지 않는다.
 		server.runCommand("item replace entity @a hotbar.0 with minecraft:redstone_block");
@@ -2545,6 +2546,66 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		});
 		server.runCommand("effect clear @a minecraft:blindness");
 		context.waitTicks(40);
+	}
+
+	/**
+	 * 기본 배치: 모든 요소가 기본 위치·기본 크기일 때 인벤토리 HUD 가 기본으로 켜져 있는 다른 요소와 겹치지 않아야 한다.
+	 * 편집 화면에서 잰다. 거기서는 비어 있는 요소(갑옷, 포션, 타이틀 등)도 예시 내용의 크기로 자리를 차지한다.
+	 * 갑옷을 입지 않았고 효과도 걸려 있지 않을 때 부른다 (그래야 예시 크기로 잰다).
+	 */
+	private static void checkInventoryDefaultLayout(ClientGameTestContext context) {
+		context.runOnClient(minecraft -> {
+			for (HudElement element : Modules.HUD) {
+				element.resetPosition();
+				element.scale.reset();
+			}
+
+			Modules.INVENTORY.setEnabled(true);
+		});
+		context.setScreen(() -> new HudEditScreen(null));
+		context.waitTicks(3);
+		int[] inventory = elementBox(context, Modules.INVENTORY);
+		List<String> overlaps = inventoryOverlaps(context);
+		context.takeScreenshot("inventory-hud-default-layout");
+
+		// 이 검사가 겹침을 실제로 잡아내는지: 인벤토리 HUD 를 키스트로크 자리로 옮기면 키스트로크와 겹친다고 나와야 한다.
+		int[] keystrokes = elementBox(context, Modules.KEYSTROKES);
+		context.runOnClient(minecraft -> Modules.INVENTORY.setPosition(minecraft, keystrokes[0], keystrokes[1], minecraft.screen.width, minecraft.screen.height));
+		List<String> moved = inventoryOverlaps(context);
+		context.runOnClient(minecraft -> Modules.INVENTORY.resetPosition());
+
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		context.runOnClient(minecraft -> Modules.INVENTORY.setEnabled(false));
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 기본 배치 — 인벤토리 HUD 상자 {}, 겹치는 요소(겹친 크기) {} / 키스트로크 자리로 옮겼을 때 {}",
+			Arrays.toString(inventory), overlaps, moved);
+		check(moved.stream().anyMatch(overlap -> overlap.startsWith("keystrokes ")), "인벤토리 HUD 를 키스트로크 자리로 옮겼는데 겹침을 찾지 못했습니다: " + moved);
+		// 보스바만은 겹친다. 바닐라가 화면 위쪽 가운데에 너비 182로 그리는 자리라서, GUI 너비가 510 보다 좁으면
+		// 그 오른쪽 끝이 오른쪽 위에 있는 인벤토리 HUD 의 왼쪽 끝과 겹친다. 이 검사의 화면(427x240)에서는 40x14 이고, 다른 크기로 겹치면 실패한다.
+		overlaps.remove("bossbar 40x14");
+		check(overlaps.isEmpty(), "기본 위치의 인벤토리 HUD 가 기본으로 켜져 있는 요소와 겹칩니다 (요소와 겹친 크기): " + overlaps + " / 인벤토리 HUD 상자 " + Arrays.toString(inventory));
+	}
+
+	/** 인벤토리 HUD 의 상자가 기본으로 켜져 있는 다른 요소의 상자와 겹친 곳들. "요소 id 너비x높이" (GUI 좌표). */
+	private static List<String> inventoryOverlaps(ClientGameTestContext context) {
+		int[] inventory = elementBox(context, Modules.INVENTORY);
+		List<String> overlaps = new ArrayList<>();
+
+		for (HudElement element : Modules.HUD) {
+			if (!defaultHudEnabled(element)) {
+				continue;
+			}
+
+			int[] box = elementBox(context, element);
+			int width = Math.min(inventory[0] + inventory[2], box[0] + box[2]) - Math.max(inventory[0], box[0]);
+			int height = Math.min(inventory[1] + inventory[3], box[1] + box[3]) - Math.max(inventory[1], box[1]);
+
+			if (width > 0 && height > 0) {
+				overlaps.add(element.id() + " " + width + "x" + height);
+			}
+		}
+
+		return overlaps;
 	}
 
 	/** 인벤토리 HUD(크기 100%)의 index 번째 칸에 아이템이 그려지는 자리를 스크린샷 픽셀로 돌려준다 (왼쪽, 위, 한 변의 길이). */
