@@ -1109,6 +1109,19 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.takeScreenshot("menu-scrolled");
 		context.runOnClient(minecraft -> minecraft.screen.mouseScrolled(100, 100, 0, 50));
 
+		// 기능 묶음의 끝은 위 두 장 어디에도 찍히지 않는다. 기능 묶음의 마지막 카드가 목록 맨 아래에 닿을 만큼만 내려서 찍는다.
+		// 내릴 거리를 그 카드의 위치에서 구하므로 카드가 늘어도 따라간다. 목록은 화면 위아래 6픽셀과 머리·바닥 30픽셀씩을 뺀 곳이다.
+		int lastFeature = Modules.FEATURES.size() - 1;
+		int listTop = 6 + 30;
+		int listBottom = screenHeight - 6 - 30;
+		int hidden = context.computeOnClient(minecraft -> ((CafeteriaScreen) minecraft.screen).cardY(lastFeature));
+		context.runOnClient(minecraft -> minecraft.screen.mouseScrolled(100, 100, 0, -(hidden + 35 - listBottom) / 16.0));
+		int shown = context.computeOnClient(minecraft -> ((CafeteriaScreen) minecraft.screen).cardY(lastFeature));
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 메뉴 — 기능 묶음 마지막 카드의 세로 위치 {} → {} (목록 {}~{})", hidden, shown, listTop, listBottom);
+		check(hidden + 35 > listBottom && shown >= listTop && shown + 35 <= listBottom, "기능 묶음의 마지막 카드가 목록 안에 들어오지 않습니다: " + hidden + " → " + shown);
+		context.takeScreenshot("menu-features-end");
+		context.runOnClient(minecraft -> minecraft.screen.mouseScrolled(100, 100, 0, 50));
+
 		// 첫 번째 카드(프리룩)의 위치와 스위치 위치
 		int[] card = context.computeOnClient(minecraft -> {
 			CafeteriaScreen screen = (CafeteriaScreen) minecraft.screen;
