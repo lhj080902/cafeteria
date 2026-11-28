@@ -52,6 +52,7 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.animal.Pig;
 import net.minecraft.world.entity.npc.Villager;
 import net.minecraft.world.inventory.tooltip.BundleTooltip;
 import net.minecraft.world.inventory.tooltip.TooltipComponent;
@@ -2865,7 +2866,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		double[] playerHome = context.computeOnClient(minecraft -> new double[] {
 			minecraft.player.getX(), minecraft.player.getY(), minecraft.player.getZ(), minecraft.player.getYRot(), minecraft.player.getXRot()
 		});
-		int villagerId = context.computeOnClient(minecraft -> nearestVillager(minecraft).getId());
+		int villagerId = context.computeOnClient(minecraft -> nearestEntity(minecraft, Villager.class).getId());
 		double[] villagerHome = context.computeOnClient(minecraft -> {
 			Entity villager = minecraft.level.getEntity(villagerId);
 			return new double[] {villager.getX(), villager.getY(), villager.getZ()};
@@ -2924,10 +2925,15 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		checkHealthBarVisibility(context, server, villagerId);
 		checkHealthBarPlayer(context, villagerId);
 
-		// 모듈을 끄면 그리지 않는다. 끄기 직전에는 주민에게 떠 있다.
+		// 여기부터는 다시 생물이 대상이다.
 		context.runOnClient(minecraft -> Modules.HEALTH_BAR.target.set("living"));
 		context.waitTicks(5);
 		check(healthBar(context, villagerId) != null, "대상을 다시 생물로 바꿨는데 주민의 체력바가 그려지지 않습니다");
+		checkHealthBarSizeSettings(context, villagerId);
+		checkHealthBarMount(context, server);
+
+		// 모듈을 끄면 그리지 않는다. 끄기 직전에는 주민에게 떠 있다.
+		check(healthBar(context, villagerId) != null, "모듈을 끄기 전인데 주민의 체력바가 그려지지 않습니다");
 		context.runOnClient(minecraft -> Modules.HEALTH_BAR.setEnabled(false));
 		context.waitTicks(3);
 		check(healthBars(context).isEmpty(), "체력바를 껐는데 그려졌습니다: " + healthBars(context));
@@ -2955,7 +2961,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.runOnClient(minecraft -> Modules.HEALTH_BAR.background.set(false));
 		context.waitTicks(3);
 		double middle = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth()) / 2.0;
-		double[] expected = expectedHealthBarPoint(context, villagerId, 1.0);
+		double[] expected = expectedHealthBarPoint(context, villagerId, 1.0, 0.0);
 		HealthBarRenderer.Drawn plain = healthBar(context, villagerId);
 		check(plain != null, "배경을 끈 체력바가 그려지지 않았습니다");
 
@@ -2972,7 +2978,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		input.holdKey(CafeteriaClient.zoomKey);
 		context.waitTicks(5);
 		double factor = zoomFactor(context);
-		double[] zoomedExpected = expectedHealthBarPoint(context, villagerId, factor);
+		double[] zoomedExpected = expectedHealthBarPoint(context, villagerId, factor, 0.0);
 		HealthBarRenderer.Drawn zoomed = healthBar(context, villagerId);
 		input.releaseKey(CafeteriaClient.zoomKey);
 		context.waitTicks(5);
@@ -2997,14 +3003,15 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	}
 
 	/**
-	 * 엔티티의 체력바 기준점(키보다 0.5칸 위)이 화면의 어디에 오는지를 그리는 코드와 따로 구한다 (GUI 좌표 x, y).
-	 * 카메라의 방향 벡터와 시야각만 쓴다. zoom 은 줌 배율(없으면 1). 가만히 서 있을 때만 맞는다 (걷는 흔들림과 달리기 시야각 보정은 넣지 않았다).
+	 * 엔티티의 체력바 기준점(키보다 0.5칸 위)이 화면의 어디에 오는지를 그리는 코드와 따로 구한다 (GUI 좌표 x, y 와 카메라 앞쪽으로의 거리).
+	 * 카메라의 방향 벡터와 시야각만 쓴다. zoom 은 줌 배율(없으면 1), lift 는 기준점을 더 올리는 높이(블록, 없으면 0).
+	 * 가만히 서 있을 때만 맞는다 (걷는 흔들림과 달리기 시야각 보정은 넣지 않았다).
 	 */
-	private static double[] expectedHealthBarPoint(ClientGameTestContext context, int entityId, double zoom) {
+	private static double[] expectedHealthBarPoint(ClientGameTestContext context, int entityId, double zoom, double lift) {
 		return context.computeOnClient(minecraft -> {
 			Entity entity = minecraft.level.getEntity(entityId);
 			Camera camera = minecraft.gameRenderer.getMainCamera();
-			Vec3 offset = entity.position().add(0.0, entity.getBbHeight() + 0.5, 0.0).subtract(camera.getPosition());
+			Vec3 offset = entity.position().add(0.0, entity.getBbHeight() + 0.5 + lift, 0.0).subtract(camera.getPosition());
 			double depth = offset.dot(new Vec3(camera.getLookVector()));
 			double up = offset.dot(new Vec3(camera.getUpVector()));
 			double right = -offset.dot(new Vec3(camera.getLeftVector()));
@@ -3012,7 +3019,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			double aspect = (double) minecraft.getWindow().getWidth() / minecraft.getWindow().getHeight();
 			double width = minecraft.getWindow().getGuiScaledWidth();
 			double height = minecraft.getWindow().getGuiScaledHeight();
-			return new double[] {width / 2.0 + right / (depth * tangent * aspect) * width / 2.0, height / 2.0 - up / (depth * tangent) * height / 2.0};
+			return new double[] {width / 2.0 + right / (depth * tangent * aspect) * width / 2.0, height / 2.0 - up / (depth * tangent) * height / 2.0, depth};
 		});
 	}
 
@@ -3210,6 +3217,90 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(context.computeOnClient(minecraft -> minecraft.level.getEntity(fakeId)) == null, "가짜 플레이어가 지워지지 않았습니다");
 	}
 
+	/**
+	 * 크기와 높이 조정 설정. 같은 대상을 같은 카메라로 보면서 설정만 바꾼다.
+	 * 배경을 끄면 전체 사각형의 위쪽이 곧 기준점이라, 높이 조정으로 올라간 양을 따로 계산한 기준점과 바로 비교할 수 있다.
+	 */
+	private static void checkHealthBarSizeSettings(ClientGameTestContext context, int villagerId) {
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.background.set(false));
+		context.waitTicks(3);
+		HealthBarRenderer.Drawn normal = healthBar(context, villagerId);
+		double[] expected = expectedHealthBarPoint(context, villagerId, 1.0, 0.0);
+
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.scale.set(2.0));
+		context.waitTicks(3);
+		HealthBarRenderer.Drawn doubled = healthBar(context, villagerId);
+
+		// 높이 조정 1칸: 기준점이 1칸 올라간다. 카메라에서 조금 멀어지므로 화면에서 움직이는 양은 따로 투영해서 구한다.
+		context.runOnClient(minecraft -> {
+			Modules.HEALTH_BAR.scale.reset();
+			Modules.HEALTH_BAR.offset.set(1.0);
+		});
+		context.waitTicks(3);
+		HealthBarRenderer.Drawn raised = healthBar(context, villagerId);
+		double[] raisedExpected = expectedHealthBarPoint(context, villagerId, 1.0, 1.0);
+
+		context.runOnClient(minecraft -> {
+			Modules.HEALTH_BAR.offset.reset();
+			Modules.HEALTH_BAR.background.reset();
+		});
+		context.waitTicks(3);
+
+		check(normal != null && doubled != null && raised != null, "설정을 바꾼 뒤 체력바가 그려지지 않았습니다: 기본 " + normal + ", 크기 2배 " + doubled + ", 높이 조정 1칸 " + raised);
+		float width = normal.barRight() - normal.barLeft();
+		float height = normal.barBottom() - normal.barTop();
+		float doubledWidth = doubled.barRight() - doubled.barLeft();
+		float doubledHeight = doubled.barBottom() - doubled.barTop();
+		double moved = normal.top() - raised.top();
+		double expectedMove = expected[1] - raisedExpected[1];
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 체력바 설정 — 바 크기 {}x{} → 크기 2배 {}x{} / 높이 조정 1칸: 위로 {} (따로 계산한 값 {})",
+			width, height, doubledWidth, doubledHeight, moved, expectedMove);
+		check(Math.abs(doubledWidth - width * 2) <= 1 && Math.abs(doubledHeight - height * 2) <= 1,
+			"크기를 2배로 했는데 바의 너비와 높이가 2배가 아닙니다: " + width + "x" + height + " → " + doubledWidth + "x" + doubledHeight);
+		check(moved > 0 && Math.abs(moved - expectedMove) <= 1, "높이 조정 1칸으로 올라간 양이 따로 계산한 값과 다릅니다: " + moved + " / 기대 " + expectedMove);
+	}
+
+	/**
+	 * 내가 탄 엔티티에는 띄우지 않는다. 기준점이 카메라 바로 아래에 놓여서, 띄우면 화면을 덮을 만큼 크게 그려진다.
+	 * 돼지를 새로 소환해서 타고 똑바로 내려다본다. 그러면 기준점이 카메라 바로 앞 0.5칸이라, 타고 있다는 것 말고는 그리지 않을 이유가 없다.
+	 * 끝나면 돼지를 없앤다.
+	 */
+	private static void checkHealthBarMount(ClientGameTestContext context, TestServerContext server) {
+		String pig = "@e[type=minecraft:pig,tag=cafeteria_mount,limit=1]";
+		double[] home = context.computeOnClient(minecraft -> new double[] {minecraft.player.getX(), minecraft.player.getY(), minecraft.player.getZ()});
+		// 앞 오른쪽 가까이에 세운다. 검사 처음에 세워 둔 돼지보다 가까워서 "가장 가까운 돼지"가 이 돼지다. 없앨 때 고기를 떨어뜨리지 않게 해 둔다.
+		server.runCommand("execute as @a at @s run summon minecraft:pig ~-2 ~ ~2 {NoAI:1b,Silent:1b,DeathLootTable:\"minecraft:empty\",Tags:[\"cafeteria_mount\"]}");
+		context.waitTicks(10);
+		int pigId = context.computeOnClient(minecraft -> nearestEntity(minecraft, Pig.class).getId());
+		boolean before = healthBar(context, pigId) != null;
+
+		// 탄 채로 tp 하면 내려지므로 고개는 rotate 로 돌린다.
+		server.runCommand("execute as @a run ride @s mount " + pig);
+		server.runCommand("execute as @a run rotate @s 0 90");
+		context.waitTicks(10);
+		boolean riding = context.computeOnClient(minecraft -> minecraft.player.getVehicle() != null && minecraft.player.getVehicle().getId() == pigId);
+		double depth = expectedHealthBarPoint(context, pigId, 1.0, 0.0)[2];
+		HealthBarRenderer.Drawn mounted = healthBar(context, pigId);
+
+		server.runCommand("execute as @a run ride @s dismount");
+		server.runCommand(String.format(Locale.ROOT, "tp @a %.6f %.6f %.6f 0 5", home[0], home[1], home[2]));
+		context.waitTicks(10);
+		boolean after = healthBar(context, pigId) != null;
+
+		// 돼지는 보이지 않는 곳(월드 아래)으로 옮긴 뒤 없앤다. 쓰러지는 모습과 연기 입자가 화면에 남지 않는다.
+		server.runCommand("execute as " + pig + " at @s run tp @s ~ -200 ~");
+		server.runCommand("kill " + pig);
+		context.waitTicks(30);
+
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 탄 돼지의 체력바 — 타기 전 {}, 탄 채로 내려다볼 때 {} (기준점까지 카메라 앞으로 {}칸), 내린 뒤 {}", before, mounted, depth, after);
+		check(before, "소환한 돼지에게 체력바가 뜨지 않아 비교할 수 없습니다");
+		check(riding, "돼지에 타지 못해 비교할 수 없습니다");
+		check(depth > 0.05, "탄 돼지의 기준점이 카메라 앞에 있지 않아 비교할 수 없습니다: " + depth);
+		check(mounted == null, "내가 탄 돼지에게 체력바가 그려졌습니다: " + mounted);
+		check(after, "돼지에서 내렸는데 체력바가 다시 뜨지 않습니다");
+		check(context.computeOnClient(minecraft -> minecraft.level.getEntity(pigId)) == null, "검사에 쓴 돼지가 지워지지 않았습니다");
+	}
+
 	/** 플레이어 자리에서 명령어를 실행한다. %s 자리에는 플레이어에게 가장 가까운 주민(검사 처음에 세워 둔 것)을 가리키는 선택자가 들어간다. */
 	private static void villagerCommand(TestServerContext server, String command) {
 		server.runCommand("execute as @a at @s run " + command.replace("%s", "@e[type=minecraft:villager,limit=1,sort=nearest]"));
@@ -3221,17 +3312,17 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.waitTicks(5);
 	}
 
-	/** 플레이어에게 가장 가까운 주민. */
-	private static Entity nearestVillager(Minecraft minecraft) {
+	/** 플레이어에게 가장 가까운, 이 종류의 엔티티. */
+	private static Entity nearestEntity(Minecraft minecraft, Class<? extends Entity> type) {
 		Entity nearest = null;
 
 		for (Entity entity : minecraft.level.entitiesForRendering()) {
-			if (entity instanceof Villager && (nearest == null || entity.distanceToSqr(minecraft.player) < nearest.distanceToSqr(minecraft.player))) {
+			if (type.isInstance(entity) && (nearest == null || entity.distanceToSqr(minecraft.player) < nearest.distanceToSqr(minecraft.player))) {
 				nearest = entity;
 			}
 		}
 
-		check(nearest != null, "검사 처음에 세워 둔 주민이 보이지 않습니다");
+		check(nearest != null, "검사에 쓸 엔티티가 보이지 않습니다: " + type.getSimpleName());
 		return nearest;
 	}
 

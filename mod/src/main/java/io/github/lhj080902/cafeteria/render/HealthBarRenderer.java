@@ -140,9 +140,17 @@ public final class HealthBarRenderer {
 		targetLevel = null;
 	}
 
-	/** 나 자신(카메라 엔티티), 죽은 것, 관전자, 갑옷 거치대, 나에게 투명한 것은 대상이 아니다. */
+	/** 나 자신(카메라 엔티티)과 내가 탄 엔티티, 죽은 것, 관전자, 갑옷 거치대, 나에게 투명한 것은 대상이 아니다. */
 	private static boolean isTarget(Minecraft minecraft, LivingEntity entity) {
-		if (entity == minecraft.getCameraEntity() || !entity.isAlive() || entity.isSpectator() || entity instanceof ArmorStand) {
+		Entity cameraEntity = minecraft.getCameraEntity();
+
+		if (entity == cameraEntity || !entity.isAlive() || entity.isSpectator() || entity instanceof ArmorStand) {
+			return false;
+		}
+
+		// 내가 탄 엔티티(그것이 또 무언가를 타고 있으면 거기까지)의 기준점은 카메라 바로 아래라서, 그리면 화면을 덮을 만큼 커진다.
+		// 바닐라도 누가 타고 있는 엔티티의 이름표는 숨긴다.
+		if (cameraEntity != null && entity.hasIndirectPassenger(cameraEntity)) {
 			return false;
 		}
 
