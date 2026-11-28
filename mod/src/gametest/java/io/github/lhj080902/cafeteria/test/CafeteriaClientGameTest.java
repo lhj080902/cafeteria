@@ -2729,7 +2729,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(tooltipImage(context, shulker).isEmpty(), "Shift 를 뗐는데 미리보기가 남아 있습니다");
 		check(tooltipLineCount(context, shulker) == plainLines, "Shift 를 뗐는데 셜커 상자의 글자 줄이 돌아오지 않았습니다: " + plainLines + " → " + tooltipLineCount(context, shulker));
 
-		// 여기부터는 화면으로 본다. 인벤토리의 첫 칸에 빨간 블록 7개가 든 셜커 상자를 넣고 그 칸에 커서를 올린다.
+		// 여기부터는 화면으로 본다. 인벤토리의 첫 칸에 레드스톤 블록 7개가 든 셜커 상자를 넣고 그 칸에 커서를 올린다.
 		// 앞 검사가 아이템을 남겼으면 비운다. 이미 비어 있을 때 명령어를 보내면 실패 문구만 서버 로그에 남는다.
 		if (!context.computeOnClient(minecraft -> minecraft.player.getInventory().isEmpty())) {
 			server.runCommand("clear @a");

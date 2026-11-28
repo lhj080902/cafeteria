@@ -16,9 +16,9 @@ import java.util.stream.IntStream;
  * slots 는 0번 칸부터 rows * 9 칸이고, 빈 칸은 ItemStack.EMPTY 다.
  */
 public record ContainerPreviewTooltip(List<ItemStack> slots, int rows) implements TooltipComponent {
-	public static final int COLUMNS = 9;
 	/** 격자에 그릴 수 있는 칸 수 (큰 상자 크기). */
 	public static final int MAX_SLOTS = 54;
+	private static final int COLUMNS = 9;
 	private static final int MIN_ROWS = 3;
 	private static final int CELL = 18;
 
@@ -30,7 +30,8 @@ public record ContainerPreviewTooltip(List<ItemStack> slots, int rows) implement
 	public static ContainerPreviewTooltip of(ItemContainerContents contents) {
 		List<ItemStack> items = contents.stream().toList();
 		int rows = Mth.clamp(Mth.positiveCeilDiv(lastFilledSlot(items) + 1, COLUMNS), MIN_ROWS, MAX_SLOTS / COLUMNS);
-		return new ContainerPreviewTooltip(IntStream.range(0, rows * COLUMNS).mapToObj(slot -> slot < items.size() ? items.get(slot) : ItemStack.EMPTY).toList(), rows);
+		List<ItemStack> slots = IntStream.range(0, rows * COLUMNS).mapToObj(slot -> slot < items.size() ? items.get(slot) : ItemStack.EMPTY).toList();
+		return new ContainerPreviewTooltip(slots, rows);
 	}
 
 	/** 마지막으로 찬 칸의 번호. 모두 비어 있으면 -1. */
