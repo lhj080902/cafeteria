@@ -2906,8 +2906,9 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		checkHealthBarPlacement(context, input, server, villagerId);
 
 		// 체력을 깎으면(20 → 4) 채운 폭이 줄고 빨강이 된다. 가득일 때 초록이던 오른쪽 끝은 빈 바탕이 된다.
+		// 맞은 직후의 붉은 기가 가신 뒤에 찍는다.
 		villagerCommand(server, "damage %s 16");
-		context.waitTicks(10);
+		context.waitTicks(20);
 		BufferedImage lowShot = readImage(context.takeScreenshot("health-bar-low"));
 		HealthBarRenderer.Drawn low = healthBar(context, villagerId);
 		check(low != null, "체력을 깎은 주민의 체력바가 그려지지 않았습니다");
@@ -3024,7 +3025,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		villagerCommand(server, "data merge entity %s {CustomName:'\"체력바 검사용으로 붙인 긴 칭호\"',CustomNameVisible:1b}");
 		// 글자 표시는 놓은 자리에서 위쪽으로 그려진다 (3배 크기의 한 줄은 폭 1.9칸, 높이 0.75칸).
 		// 카메라에서 1.5칸 앞, 체력바를 보는 시선 위에 그 가운데가 오게 둔다. 글자도 배경과 같은 색이라 전체가 한 가지 색이다.
-		server.runCommand("execute as @a at @s run summon minecraft:text_display ~ ~1.54 ~1.5 {billboard:\"center\",background:-65281,brightness:{sky:15,block:15},"
+		// 정렬(alignment)은 기본값이지만 적어 둔다. 빼면 바닐라가 소환할 때 "Not a string" 오류를 로그에 남긴다.
+		server.runCommand("execute as @a at @s run summon minecraft:text_display ~ ~1.54 ~1.5 {billboard:\"center\",alignment:\"center\",background:-65281,brightness:{sky:15,block:15},"
 			+ "text:'{\"text\":\"MMMM\",\"color\":\"#FF00FF\"}',transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],translation:[0f,0f,0f],scale:[3f,3f,3f]}}");
 		context.waitTicks(10);
 		BufferedImage covered = readImage(context.takeScreenshot("health-bar-over-title"));
@@ -3074,7 +3076,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 	/**
 	 * 체력바를 띄우지 않는 조건: 벽 뒤, 투명화, 카메라 뒤, 표시 거리 밖. 조건이 풀리면 다시 뜬다.
-	 * 대상이 카메라와 같은 자리에 있어도 죽지 않아야 한다.
+	 * 대상이 카메라와 같은 자리에 있을 때도 죽거나 엉뚱한 곳에 그리지 않아야 한다.
 	 */
 	private static void checkHealthBarVisibility(ClientGameTestContext context, TestServerContext server, int villagerId) {
 		// 벽: 플레이어와 주민 사이(1.5~2.5칸 앞)에 눈 높이와 머리 위를 모두 가리는 돌 벽. 둘 다 블록 한가운데에 서 있어서 벽에 끼지 않는다.
@@ -3102,14 +3104,22 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		check(!behindCamera, "등 뒤에 있는 주민의 체력바가 그려졌습니다");
 		check(healthBar(context, villagerId) != null, "다시 앞을 봤는데 체력바가 뜨지 않습니다");
 
-		// 주민을 플레이어와 같은 자리에 둔다. 기준점은 카메라 바로 위 0.8칸이다. 정면을 볼 때와 올려다볼 때 모두 죽지 않아야 한다 (그려지는지는 따지지 않는다).
+		// 주민을 플레이어와 같은 자리에 둔다. 기준점은 카메라 바로 위 0.8칸이다.
+		// 수평으로 보면 기준점이 시선과 직각이라 카메라 앞쪽으로의 거리(w)가 0 이다: 0 으로 나누지 않고 그리지 않아야 한다.
+		// 똑바로 올려다보면 기준점이 바로 앞 0.8칸이다: 화면 한가운데에 그려져야 한다.
+		double middle = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth()) / 2.0;
 		villagerCommand(server, "tp %s ~ ~ ~");
 		context.waitTicks(10);
+		turnPlayer(context, server, 0.0, 0.0);
+		HealthBarRenderer.Drawn horizontal = healthBar(context, villagerId);
 		turnPlayer(context, server, 0.0, -90.0);
-		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 주민을 플레이어와 같은 자리에 두고 올려다봤을 때의 체력바 {}", healthBar(context, villagerId));
+		HealthBarRenderer.Drawn overhead = healthBar(context, villagerId);
 		turnPlayer(context, server, 0.0, 5.0);
 		villagerCommand(server, "tp %s ~ ~ ~3");
 		context.waitTicks(10);
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 주민을 플레이어와 같은 자리에 뒀을 때의 체력바 — 수평으로 볼 때 {} / 올려다볼 때 {}", horizontal, overhead);
+		check(horizontal == null, "기준점이 카메라 바로 위(앞쪽 거리 0)에 있는데 체력바가 그려졌습니다: " + horizontal);
+		check(overhead != null && Math.abs(centerX(overhead) - middle) <= 2, "바로 위에 있는 기준점을 올려다봤는데 체력바가 화면 가운데에 그려지지 않았습니다: " + overhead);
 		check(healthBar(context, villagerId) != null, "주민을 다시 앞에 세웠는데 체력바가 뜨지 않습니다");
 
 		// 표시 거리 8칸: 3칸 앞에서는 뜨고 12칸 앞에서는 뜨지 않는다.

@@ -134,6 +134,7 @@ public final class HealthBarRenderer {
 		targetLevel = level;
 	}
 
+	/** 고른 대상을 버린다. 월드가 바뀌거나 모듈이 꺼지면 예전 id 가 다른 엔티티를 가리킬 수 있다. */
 	private static void forgetTargets() {
 		targets = List.of();
 		targetLevel = null;
@@ -152,6 +153,7 @@ public final class HealthBarRenderer {
 		return !entity.isInvisibleTo(minecraft.player);
 	}
 
+	/** 두 지점 사이를 블록이 가리지 않는지 (엔티티는 따지지 않는다). */
 	private static boolean canSee(ClientLevel level, Vec3 from, Vec3 to, Entity entity) {
 		return level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity)).getType() == HitResult.Type.MISS;
 	}
