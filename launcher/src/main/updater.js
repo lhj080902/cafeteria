@@ -9,6 +9,7 @@ const fs = require('node:fs');
  * ① 한가할 때 스스로 다시 시작: 런처가 하는 일이 없으면 곧 다시 시작한다고 알리고, 잠깐 뒤에 quitAndInstall(false, true) 로
  *    껐다가 새 버전으로 다시 켠다. "재시작해서 설치" 버튼도 같은 호출을 기다리지 않고 한다.
  *    스스로 하는 시도는 버전마다 한 번뿐이다. 설치가 끝나지 않고 같은 버전으로 다시 켜지면 버튼에 맡긴다 (createAttemptStore).
+ *    시도했다는 기록을 읽거나 쓰지 못할 때도 스스로 설치하지 않고 버튼에 맡긴다 (켤 때마다 다시 시작하는 것을 막을 수 없으므로).
  * ② 런처를 끌 때 조용히 설치: 전부터 있던 autoInstallOnAppQuit. 게임을 띄우고 런처를 닫는 설정이면 이쪽으로 설치되는 일이 많다.
  *
  * 확인된 정도: 버튼을 눌러 quitAndInstall(false, true) 로 설치하는 것은 실제 Windows 에서 확인됐다 (1.2.2 → 1.3.0).
@@ -28,7 +29,8 @@ const fs = require('node:fs');
  * @property {number} [percent] 다운로드 진행률(0~100)
  * @property {string} [message] 안내문
  * @property {'off'|'waiting'|'failed'} [auto] 'ready' 일 때만 있다. 스스로 설치하는 일이 어떻게 돼 있는지:
- *   'off' 는 하지 않음(자동 업데이트를 껐거나 스스로 설치할 수 없는 런처), 'waiting' 은 하던 일이 끝나면 함, 'failed' 는 이 버전을 이미 한 번 시도함
+ *   'off' 는 하지 않음(자동 업데이트를 껐거나 스스로 설치할 수 없는 런처), 'waiting' 은 하던 일이 끝나면 함,
+ *   'failed' 는 이 버전을 이미 한 번 시도함(시도 기록을 읽거나 쓰지 못한 때도 이렇게 본다)
  * @property {boolean} canInstall 이 런처가 스스로 설치까지 할 수 있는지
  */
 
@@ -51,6 +53,8 @@ class UpdateManager {
    * @param {{read: () => string | null, write: (version: string) => void}} [options.attempts] 스스로 설치를 시도한 버전을 적어 두는 곳
    * @param {number} [options.delayMs] 곧 다시 시작한다고 알린 뒤 실제로 설치하기까지의 시간
    * @param {{set: (callback: () => void, ms: number) => any, clear: (timer: any) => void}} [options.timers] 타이머 (테스트에서 바꿔 끼운다)
+   * @param {(message: string, code: string | undefined) => void} [options.log] 시도 기록을 읽거나 쓰지 못해 스스로 설치하지 않게 됐을 때 남길 곳.
+   *   짧은 안내문과 오류 코드만 넘긴다 (경로나 운영체제가 준 오류 글은 넘기지 않는다)
    */
   constructor({
     autoUpdater,
@@ -62,6 +66,7 @@ class UpdateManager {
     attempts = { read: () => null, write: () => {} },
     delayMs = 3000,
     timers = { set: setTimeout, clear: clearTimeout },
+    log = () => {},
   }) {
     this.autoUpdater = autoUpdater;
     this.canInstall = Boolean(autoUpdater) && canInstall;
@@ -72,6 +77,7 @@ class UpdateManager {
     this.attempts = attempts;
     this.delayMs = delayMs;
     this.timers = timers;
+    this.log = log;
     /** @type {UpdateState} */
     this.state = autoUpdater
       ? { status: 'idle', canInstall: this.canInstall }
@@ -83,6 +89,11 @@ class UpdateManager {
      * @type {{handle: any} | null}
      */
     this.installTimer = null;
+    /**
+     * 이번 실행에서 더는 스스로 설치하지 않을 버전: 이미 한 번 시도했거나, 시도 기록을 읽거나 쓰지 못했다.
+     * @type {string | null}
+     */
+    this.noRetryVersion = null;
 
     if (autoUpdater) {
       this.bind(autoUpdater);
@@ -164,12 +175,31 @@ class UpdateManager {
 
     if (!this.canInstall || !this.autoInstall()) {
       auto = 'off';
-    } else if (this.attempts.read() === version) {
+    } else if (this.alreadyAttempted(version)) {
       // 한 번 시도했는데 같은 버전으로 다시 켜졌다. 끝없이 다시 시작하지 않게 버튼에 맡긴다.
       auto = 'failed';
     }
 
     return { status: 'ready', version, auto, message: READY_MESSAGES[auto](version) };
+  }
+
+  /**
+   * 이 버전을 스스로 설치하려고 한 적이 있는지. 기록을 믿을 수 없으면(읽거나 쓰지 못함) 한 적이 있는 것으로 본다.
+   * 모르는 채로 다시 시작했다가 설치가 끝나지 않으면 켤 때마다 다시 시작하게 되므로, 그럴 바에는 버튼에 맡긴다.
+   */
+  alreadyAttempted(version) {
+    if (this.noRetryVersion === version) {
+      return true;
+    }
+
+    try {
+      return this.attempts.read() === version;
+    } catch (error) {
+      // 버전을 기억해 둬서, 다시 판단할 때마다 되풀이해서 읽고 남기지 않는다.
+      this.noRetryVersion = version;
+      this.log('자동 설치를 시도한 기록을 읽지 못해서 스스로 설치하지 않습니다.', error && error.code);
+      return true;
+    }
   }
 
   /**
@@ -186,8 +216,9 @@ class UpdateManager {
     const ready = this.readyState(version);
 
     if (ready.auto === 'waiting' && !this.isBusy()) {
-      // 막는 것이 없다. 이미 알리고 기다리는 중이면 걸어 둔 타이머를 그대로 둔다.
-      if (status === 'ready') {
+      // 막는 것이 없다. 이미 알리고 타이머가 걸려 있으면 그대로 둔다. 'installing' 인데 타이머가 없으면(버튼으로 설치를
+      // 시작했는데 런처가 꺼지지 않음) 버튼 없이 멈춰 있지 않게 다시 건다.
+      if (!this.installTimer) {
         this.scheduleInstall(version);
       }
 
@@ -199,9 +230,11 @@ class UpdateManager {
     }
   }
 
-  /** 곧 다시 시작한다고 알리고, delayMs 뒤에 설치하도록 타이머를 건다. */
+  /** 곧 다시 시작한다고 알리고(이미 알렸으면 생략), delayMs 뒤에 설치하도록 타이머를 건다. */
   scheduleInstall(version) {
-    this.set({ status: 'installing', version, message: `새 버전 ${version} 을 설치합니다. 런처가 곧 다시 시작됩니다.` });
+    if (this.state.status !== 'installing') {
+      this.set({ status: 'installing', version, message: `새 버전 ${version} 을 설치합니다. 런처가 곧 다시 시작됩니다.` });
+    }
 
     const timer = { handle: null };
     timer.handle = this.timers.set(() => {
@@ -218,8 +251,20 @@ class UpdateManager {
         return;
       }
 
+      // 스스로 하는 시도는 여기서 한 번뿐이다. 아래에서 기록을 적지 못해도, 설치가 시작되지 않아 런처가 그대로 켜져 있어도
+      // 이번 실행에서는 이 버전을 다시 시도하지 않는다.
+      this.noRetryVersion = version;
+
       // 설치가 끝나지 않고 같은 버전으로 다시 켜졌을 때 또 다시 시작하지 않게, 시도했다는 것을 먼저 적어 둔다.
-      this.attempts.write(version);
+      try {
+        this.attempts.write(version);
+      } catch (error) {
+        // 적지 못했으면 다시 시작하지 않는다. 기록이 없으면 다음에 켜졌을 때 이미 시도했다는 것을 알 수 없다.
+        this.log('자동 설치를 시도한 기록을 쓰지 못해서 스스로 설치하지 않습니다.', error && error.code);
+        this.set(this.readyState(version));
+        return;
+      }
+
       this.autoUpdater.quitAndInstall(false, true);
     }, this.delayMs);
     this.installTimer = timer;
@@ -251,27 +296,40 @@ class UpdateManager {
  * 스스로 설치를 시도한 버전을 적어 두는 파일. 내용은 { "autoInstallAttempt": "<버전>" }.
  * 런처가 꺼졌다 켜져도 남아 있어야 해서 파일에 둔다.
  *
+ * 이 기록이 같은 버전을 되풀이해서 설치하려 드는 것을 막는 유일한 장치다. 그래서 읽거나 쓰지 못한 것을 "시도한 적 없음"으로
+ * 넘기지 않고 던진다 (UpdateManager 는 던지면 스스로 설치하지 않는다).
+ *
  * @param {string} filePath
  * @returns {{read: () => string | null, write: (version: string) => void}}
+ *   read 는 파일이 없거나 내용이 형식에 맞지 않을 때만 null, 그 밖의 파일 오류는 던진다. write 는 쓰지 못하면 던진다
  */
 function createAttemptStore(filePath) {
   return {
     read() {
+      let text;
+
       try {
-        const version = JSON.parse(fs.readFileSync(filePath, 'utf8')).autoInstallAttempt;
+        text = fs.readFileSync(filePath, 'utf8');
+      } catch (error) {
+        // 파일이 없는 것만 "아직 시도한 적 없음"이다. 권한이 없거나 잠겨 있는 것은 "모름"이다.
+        if (error.code === 'ENOENT') {
+          return null;
+        }
+
+        throw error;
+      }
+
+      try {
+        const version = JSON.parse(text).autoInstallAttempt;
         return typeof version === 'string' ? version : null;
       } catch {
-        // 파일이 없거나 깨졌으면 시도한 적이 없는 것으로 본다.
+        // 깨진 내용은 없는 것으로 본다. 다음에 쓸 때 덮어쓴다.
         return null;
       }
     },
 
     write(version) {
-      try {
-        fs.writeFileSync(filePath, JSON.stringify({ autoInstallAttempt: version }));
-      } catch {
-        // 적지 못했다고 업데이트를 막지는 않는다.
-      }
+      fs.writeFileSync(filePath, JSON.stringify({ autoInstallAttempt: version }));
     },
   };
 }

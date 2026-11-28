@@ -55,6 +55,12 @@ let loggingIn = false;
  * @type {import('node:child_process').ChildProcess | null}
  */
 let game = null;
+/**
+ * 이번 실행에서 공식 런처를 띄운 적이 있는지. 공식 런처에서 켠 게임은 언제 꺼지는지 런처가 알 수 없어서,
+ * 한 번 띄운 뒤로는 런처를 끌 때까지 업데이트를 설치하려고 스스로 다시 시작하지 않는다 (createUpdateManager 의 isBusy).
+ * 받아 둔 업데이트는 런처를 끌 때 조용히 설치되거나(autoInstallOnAppQuit) 다음에 켰을 때 설치된다.
+ */
+let officialLaunched = false;
 let identifyingMods = false;
 /**
  * 마지막으로 확인한 모드 업데이트. 화면에는 이름과 버전만 넘기고, 실제로 받을 주소는 여기 보관한 것만 쓴다.
@@ -116,8 +122,8 @@ const isGameRunning = () => game !== null;
 /**
  * 자동 업데이트 관리자를 만든다. 설치 파일로 설치한 Windows 런처에서만 스스로 설치까지 하고,
  * 압축본으로 실행 중이면 새 버전이 있다는 것만 알려 준다.
- * 다 받은 업데이트는 자동 업데이트가 켜져 있고 런처가 하는 일이 없을 때(처리 중인 요청, 플레이 준비, 로그인, 켜져 있는 게임이 없을 때)
- * 스스로 다시 시작해서 설치한다.
+ * 다 받은 업데이트는 자동 업데이트가 켜져 있고 런처가 하는 일이 없을 때(처리 중인 요청, 플레이 준비, 로그인, 켜져 있는 게임이 없고
+ * 이번 실행에서 공식 런처를 띄운 적도 없을 때) 스스로 다시 시작해서 설치한다.
  */
 function createUpdateManager() {
   const supported = app.isPackaged && process.platform === 'win32';
@@ -133,8 +139,9 @@ function createUpdateManager() {
       : '설치 파일로 설치한 Windows 런처에서만 자동 업데이트를 지원합니다.',
     onChange: (state) => send('update', state),
     autoInstall: () => settings.get('autoUpdate'),
-    isBusy: () => inFlight.active() > 0 || playing || loggingIn || game !== null,
+    isBusy: () => inFlight.active() > 0 || playing || loggingIn || game !== null || officialLaunched,
     attempts: createAttemptStore(path.join(app.getPath('userData'), 'update-state.json')),
+    log: (message, code) => console.error('[update]', message, code),
   });
 }
 
@@ -392,6 +399,10 @@ function play() {
     const wasRunning = await isOfficialLauncherRunning();
     await install('play', false);
     const result = await launchOfficialLauncher({ customPath: settings.get('launcherPath') });
+
+    if (result.launched) {
+      officialLaunched = true;
+    }
 
     if (result.launched && settings.get('closeOnLaunch')) {
       setTimeout(() => app.quit(), 1500);

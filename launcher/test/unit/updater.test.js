@@ -128,13 +128,15 @@ test('오류가 난 뒤에는 다시 확인할 수 있다', async () => {
 /**
  * 스스로 설치하는 흐름을 검사할 관리자. world 의 값을 바꾸면 그 뒤로 autoInstall·isBusy·attempts 가 그 값을 따른다.
  * 가짜 타이머는 걸린 것을 timers 에 쌓기만 하고, 테스트가 callback 을 직접 부른다. 지운 것은 cleared 에 쌓인다.
+ * world.readError·writeError 에 오류를 넣으면 기록을 읽거나 쓸 때 그 오류를 던진다. log 로 넘어온 인수는 logs 에 쌓인다.
  */
 function autoManager(overrides = {}) {
-  const world = { canInstall: true, autoInstall: true, busy: false, attempted: null, ...overrides };
+  const world = { canInstall: true, autoInstall: true, busy: false, attempted: null, readError: null, writeError: null, ...overrides };
   const updater = fakeAutoUpdater();
   const states = [];
   const timers = [];
   const cleared = [];
+  const logs = [];
   const updates = new UpdateManager({
     autoUpdater: updater,
     canInstall: world.canInstall,
@@ -143,8 +145,18 @@ function autoManager(overrides = {}) {
     autoInstall: () => world.autoInstall,
     isBusy: () => world.busy,
     attempts: {
-      read: () => world.attempted,
+      read: () => {
+        if (world.readError) {
+          throw world.readError;
+        }
+
+        return world.attempted;
+      },
       write: (version) => {
+        if (world.writeError) {
+          throw world.writeError;
+        }
+
         world.attempted = version;
       },
     },
@@ -156,8 +168,9 @@ function autoManager(overrides = {}) {
       },
       clear: (timer) => cleared.push(timer),
     },
+    log: (...args) => logs.push(args),
   });
-  return { updater, updates, world, states, timers, cleared };
+  return { updater, updates, world, states, timers, cleared, logs };
 }
 
 test('한가하면 3초 뒤 스스로 설치한다', () => {
@@ -372,8 +385,111 @@ test('createAttemptStore 는 깨진 파일을 없는 것으로 본다', (t) => {
   assert.equal(store.read(), '9.9.9');
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { autoInstallAttempt: '9.9.9' });
 
-  // 쓸 수 없는 곳(폴더)이어도 던지지 않는다.
-  const unwritable = createAttemptStore(directory);
-  unwritable.write('9.9.9');
-  assert.equal(unwritable.read(), null);
+  // 없는 것과 읽을 수 없는 것은 다르다. 읽거나 쓰지 못하면 던져서, 모르는 채로 스스로 설치하지 않게 한다.
+  assert.throws(() => createAttemptStore(directory).read(), { code: 'EISDIR' }, '경로가 폴더일 때');
+  assert.throws(
+    () => createAttemptStore(path.join(file, 'update-state.json')).write('9.9.9'),
+    (error) => ['ENOENT', 'ENOTDIR'].includes(error.code),
+    '경로의 부모가 보통 파일일 때',
+  );
+});
+
+test('기록을 쓰지 못하면 스스로 설치하지 않는다', () => {
+  const { updater, updates, world, timers, logs } = autoManager();
+  updater.emit('update-downloaded', { version: '9.9.9' });
+  assert.equal(updates.state.status, 'installing');
+  world.writeError = Object.assign(new Error("EACCES: permission denied, open 'C:\\Users\\someone\\update-state.json'"), { code: 'EACCES' });
+
+  timers[0].callback();
+  assert.deepEqual(updater.installed, [], '기록 없이 다시 시작하면 설치가 끝나지 않았을 때 켤 때마다 되풀이된다');
+  assert.equal(updates.state.status, 'ready');
+  assert.equal(updates.state.auto, 'failed');
+  assert.deepEqual(logs.map(([, code]) => code), ['EACCES']);
+  assert.doesNotMatch(logs[0].join(' '), /someone|permission denied/, '경로나 운영체제가 준 오류 글은 남기지 않는다');
+
+  // 다시 판단해도 또 시도하지 않고, 같은 문제를 또 남기지도 않는다.
+  updates.reconsider();
+  assert.equal(updates.state.auto, 'failed');
+  assert.equal(timers.length, 1);
+  assert.equal(logs.length, 1);
+
+  assert.equal(updates.install(), true, '버튼으로는 설치할 수 있다');
+  assert.deepEqual(updater.installed, [[false, true]]);
+});
+
+test('기록을 읽지 못하면 스스로 설치하지 않는다', () => {
+  const readError = Object.assign(new Error("EPERM: operation not permitted, open 'C:\\Users\\someone\\update-state.json'"), { code: 'EPERM' });
+  const { updater, updates, states, timers, logs } = autoManager({ readError });
+
+  updater.emit('update-downloaded', { version: '9.9.9' });
+  assert.equal(updates.state.status, 'ready');
+  assert.equal(updates.state.auto, 'failed');
+  assert.deepEqual(states.map((state) => state.auto), ['failed'], '곧 스스로 설치한다고 알린 적이 없다');
+  assert.equal(timers.length, 0);
+
+  updates.reconsider();
+  updates.reconsider();
+  assert.equal(updates.state.auto, 'failed');
+  assert.equal(timers.length, 0);
+  assert.deepEqual(logs.map(([, code]) => code), ['EPERM']);
+  assert.doesNotMatch(logs[0].join(' '), /someone|not permitted/, '경로나 운영체제가 준 오류 글은 남기지 않는다');
+
+  assert.equal(updates.install(), true, '버튼으로는 설치할 수 있다');
+  assert.deepEqual(updater.installed, [[false, true]]);
+});
+
+test('오류가 나면 기다리던 설치를 취소한다', async () => {
+  const { updater, updates, world, timers, cleared } = autoManager();
+  // 직접 누른 확인이어야 오류가 화면에 남는다.
+  await updates.check(true);
+  updater.emit('update-downloaded', { version: '9.9.9' });
+  assert.equal(updates.state.status, 'installing');
+
+  updater.emit('error', new Error('설치 파일을 찾을 수 없습니다'));
+  assert.deepEqual(cleared, [timers[0]]);
+  assert.deepEqual(updates.state, { status: 'error', message: '업데이트를 확인하지 못했습니다: 설치 파일을 찾을 수 없습니다', canInstall: true });
+
+  timers[0].callback();
+  assert.deepEqual(updater.installed, []);
+  assert.equal(world.attempted, null);
+});
+
+test('버튼을 눌렀는데 런처가 꺼지지 않으면 "설치 중"에 멈춰 있지 않는다', () => {
+  const { updater, updates, world, states, timers } = autoManager();
+  updater.emit('update-downloaded', { version: '9.9.9' });
+  assert.equal(updates.install(), true);
+  assert.equal(updates.state.status, 'installing');
+
+  // 걸어 둔 타이머가 없는 채로 다시 판단하게 되면(설치 요청이 끝남) 타이머를 다시 건다. 이미 알렸으므로 또 알리지는 않는다.
+  const notified = states.length;
+  updates.reconsider();
+  assert.equal(timers.length, 2);
+  assert.equal(states.length, notified);
+
+  // 그 타이머는 시도를 적고 설치를 한 번 더 부른다.
+  timers[1].callback();
+  assert.deepEqual(updater.installed, [[false, true], [false, true]]);
+  assert.equal(world.attempted, '9.9.9');
+
+  // 그래도 꺼지지 않으면 버튼이 보이는 ready 로 가고, 기록이 남았으므로 더는 스스로 시도하지 않는다.
+  updates.reconsider();
+  assert.equal(updates.state.status, 'ready');
+  assert.equal(updates.state.auto, 'failed');
+  updates.reconsider();
+  assert.equal(timers.length, 2);
+  assert.deepEqual(updater.installed, [[false, true], [false, true]]);
+});
+
+test('기록이 사라져도 한 번 시도한 버전은 이번 실행에서 다시 시도하지 않는다', () => {
+  const { updater, updates, world, timers } = autoManager();
+  updater.emit('update-downloaded', { version: '9.9.9' });
+  timers[0].callback();
+  assert.deepEqual(updater.installed, [[false, true]]);
+
+  // 설치가 시작되지 않아 런처가 그대로 켜져 있는데, 적어 둔 기록마저 읽히지 않는다.
+  world.attempted = null;
+  updates.reconsider();
+  assert.equal(updates.state.status, 'ready');
+  assert.equal(updates.state.auto, 'failed');
+  assert.equal(timers.length, 1);
 });
