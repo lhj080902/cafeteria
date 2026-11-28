@@ -9,6 +9,7 @@ import io.github.lhj080902.cafeteria.gui.ModuleSettingsScreen;
 import io.github.lhj080902.cafeteria.hud.ClickTracker;
 import io.github.lhj080902.cafeteria.hud.CombatTracker;
 import io.github.lhj080902.cafeteria.hud.HudElement;
+import io.github.lhj080902.cafeteria.hud.InventoryHud;
 import io.github.lhj080902.cafeteria.module.NoFogModule;
 import io.github.lhj080902.cafeteria.module.ScreenshotModule;
 import io.github.lhj080902.cafeteria.util.ScreenshotClipboard;
@@ -36,6 +37,7 @@ import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.item.Items;
 import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 
@@ -106,6 +108,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testFullbright(context, input, server);
 			testLowFire(context, server);
 			testNoFog(context, input, server, world.getClientWorld());
+			testInventoryHud(context, server);
 			testConfig(context);
 		}
 
@@ -654,6 +657,11 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		return context.computeOnClient(minecraft -> Set.copyOf(((HudEditScreen) minecraft.screen).selection()));
 	}
 
+	/** HUD 요소가 기본으로 켜져 있는지. 좌표·콤보·리치·인벤토리만 꺼져 있고 나머지는 켜져 있다. */
+	private static boolean defaultHudEnabled(HudElement element) {
+		return element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH && element != Modules.INVENTORY;
+	}
+
 	/** HUD 위치 편집: 빈 곳을 끌어 박스로 여러 개 선택하고 함께 옮긴다. */
 	private static void testHudBoxSelection(ClientGameTestContext context, TestInput input) {
 		context.setScreen(() -> new HudEditScreen(null));
@@ -740,10 +748,10 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.clickScreenButton("cafeteria.hud_edit.reset");
 		context.clickScreenButton("gui.done");
 		context.waitFor(minecraft -> minecraft.screen == null);
-		// 기본 상태로 되돌린다: 좌표·콤보·리치만 꺼져 있고 나머지는 켜져 있다.
+		// 기본 상태로 되돌린다.
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
-				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+				element.setEnabled(defaultHudEnabled(element));
 			}
 		});
 	}
@@ -1109,7 +1117,8 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	private static void testHudEditor(ClientGameTestContext context, TestInput input) {
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
-				element.setEnabled(true);
+				// 인벤토리 HUD 는 넓어서 다른 요소와 겹친다. 아래 검사의 배치가 달라지지 않게 꺼 둔다 (testInventoryHud 가 따로 본다).
+				element.setEnabled(element != Modules.INVENTORY);
 				element.resetPosition();
 			}
 		});
@@ -1226,10 +1235,10 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.waitFor(minecraft -> minecraft.screen == null);
 		check(!context.computeOnClient(minecraft -> HudElement.isEditing()), "편집 화면을 닫았는데 편집 상태가 남아 있습니다");
 
-		// 기본 상태로 되돌린다: 좌표·콤보·리치만 꺼져 있고 나머지는 켜져 있다.
+		// 기본 상태로 되돌린다.
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
-				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+				element.setEnabled(defaultHudEnabled(element));
 			}
 		});
 	}
@@ -1355,10 +1364,10 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		context.clickScreenButton("cafeteria.hud_edit.reset");
 		context.clickScreenButton("gui.done");
 		context.waitFor(minecraft -> minecraft.screen == null);
-		// 기본 상태로 되돌린다: 좌표·콤보·리치만 꺼져 있고 나머지는 켜져 있다.
+		// 기본 상태로 되돌린다.
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
-				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+				element.setEnabled(defaultHudEnabled(element));
 			}
 		});
 	}
@@ -1714,7 +1723,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			Modules.SCOREBOARD.resetPosition();
 
 			for (HudElement element : Modules.HUD) {
-				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+				element.setEnabled(defaultHudEnabled(element));
 			}
 		});
 		check(markerBounds(context, "scoreboard-removed")[0] == 0, "스코어보드를 지웠는데 화면에 남아 있습니다");
@@ -1870,7 +1879,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 
 		context.runOnClient(minecraft -> {
 			for (HudElement element : Modules.HUD) {
-				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+				element.setEnabled(defaultHudEnabled(element));
 			}
 		});
 	}
@@ -2200,7 +2209,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			minecraft.gui.getChat().clearMessages(false);
 
 			for (HudElement element : Modules.HUD) {
-				element.setEnabled(element != Modules.COORDINATES && element != Modules.COMBO && element != Modules.REACH);
+				element.setEnabled(defaultHudEnabled(element));
 			}
 		});
 		context.waitTicks(3);
@@ -2408,6 +2417,117 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	private static FogParameters fog(ClientGameTestContext context, FogRenderer.FogMode mode) {
 		return context.computeOnClient(minecraft ->
 			FogRenderer.setupFog(minecraft.gameRenderer.getMainCamera(), mode, new Vector4f(1.0F, 1.0F, 1.0F, 1.0F), 192.0F, false, 1.0F));
+	}
+
+	/**
+	 * 인벤토리 HUD: 핫바를 뺀 27칸을 보여 준다. 그 칸이 모두 비어 있으면 숨고, 편집 화면에서는 예시 아이템을 보여 준다.
+	 * 배경색이 비교에 섞이지 않도록 실명 효과로 화면을 검게 만든 뒤에 스크린샷에서 칸 자리를 잰다.
+	 */
+	private static void testInventoryHud(ClientGameTestContext context, TestServerContext server) {
+		check(!Modules.INVENTORY.isEnabled(), "인벤토리 HUD 는 기본으로 꺼져 있어야 합니다");
+		server.runCommand("clear @a");
+		context.waitTicks(5);
+		check(!context.computeOnClient(Modules.INVENTORY::hasContent), "인벤토리가 비어 있는데 인벤토리 HUD 가 표시됩니다");
+
+		// 핫바의 아이템은 세지 않는다.
+		server.runCommand("item replace entity @a hotbar.0 with minecraft:redstone_block");
+		context.waitTicks(5);
+		check(context.computeOnClient(minecraft -> minecraft.player.getInventory().getItem(0).is(Items.REDSTONE_BLOCK)), "핫바에 넣은 아이템이 보이지 않아 비교할 수 없습니다");
+		check(!context.computeOnClient(Modules.INVENTORY::hasContent), "핫바에만 아이템이 있는데 인벤토리 HUD 가 표시됩니다");
+
+		// 인벤토리 9번 칸(명령어로는 inventory.0)이 HUD 의 0번 칸이다.
+		server.runCommand("item replace entity @a inventory.0 with minecraft:redstone_block 5");
+		context.waitTicks(5);
+		check(context.computeOnClient(Modules.INVENTORY::hasContent), "인벤토리에 아이템이 있는데 인벤토리 HUD 가 비어 있습니다");
+
+		// 입자가 재는 자리를 덮지 않게 입자 설정을 "최소"로 두고, 이미 떠 있던 것(수명 최대 40틱)이 사라질 때까지 기다린다.
+		ParticleStatus particles = context.computeOnClient(minecraft -> {
+			ParticleStatus before = minecraft.options.particles().get();
+			minecraft.options.particles().set(ParticleStatus.MINIMAL);
+			return before;
+		});
+		server.runCommand("effect give @a minecraft:blindness 120 0 true");
+		context.waitTicks(50);
+		// 알림을 치우고 인벤토리 HUD 만 켠다.
+		context.runOnClient(minecraft -> {
+			minecraft.getToastManager().clear();
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(element == Modules.INVENTORY);
+			}
+		});
+		context.waitTicks(3);
+		int[] first = inventorySlotArea(context, 0);
+		int[] sixth = inventorySlotArea(context, 5);
+		BufferedImage shown = readImage(context.takeScreenshot("inventory-hud"));
+		int item = colorfulPixels(shown, first[0], first[1], first[2], first[2]);
+		int blank = colorfulPixels(shown, sixth[0], sixth[1], sixth[2], sixth[2]);
+
+		context.runOnClient(minecraft -> Modules.INVENTORY.setEnabled(false));
+		context.waitTicks(3);
+		BufferedImage hidden = readImage(context.takeScreenshot("inventory-hud-off"));
+		int off = colorfulPixels(hidden, first[0], first[1], first[2], first[2]);
+
+		// 편집 화면: 인벤토리가 비어 있어도 위치를 잡을 수 있게 예시 아이템(앞의 다섯 칸)이 보인다.
+		server.runCommand("clear @a");
+		context.waitTicks(5);
+		context.runOnClient(minecraft -> Modules.INVENTORY.setEnabled(true));
+		check(!context.computeOnClient(Modules.INVENTORY::hasContent), "인벤토리를 비웠는데 인벤토리 HUD 가 표시됩니다");
+		context.setScreen(() -> new HudEditScreen(null));
+		context.waitTicks(3);
+		check(context.computeOnClient(Modules.INVENTORY::hasContent), "편집 화면에서 빈 인벤토리 HUD 가 예시로 표시되지 않습니다");
+		BufferedImage editing = readImage(context.takeScreenshot("inventory-hud-edit"));
+		int sample = colorfulPixels(editing, first[0], first[1], first[2], first[2]) + brightPixels(editing, first[0], first[1], first[2], first[2]);
+		int sampleBlank = colorfulPixels(editing, sixth[0], sixth[1], sixth[2], sixth[2]) + brightPixels(editing, sixth[0], sixth[1], sixth[2], sixth[2]);
+		context.clickScreenButton("gui.done");
+		context.waitFor(minecraft -> minecraft.screen == null);
+		check(!context.computeOnClient(Modules.INVENTORY::hasContent), "편집 화면을 닫았는데 빈 인벤토리 HUD 가 표시됩니다");
+
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 인벤토리 HUD 칸 자리의 색 있는 픽셀 — 0번 칸 {}, 5번 칸 {}, 끈 뒤 0번 칸 {} / 편집 화면의 밝거나 색 있는 픽셀 — 0번 칸 {}, 5번 칸 {}",
+			item, blank, off, sample, sampleBlank);
+		check(item >= first[2] * first[2] / 4, "인벤토리 HUD 의 0번 칸에 아이템이 그려지지 않았습니다: " + item + "픽셀");
+		check(blank == 0, "비어 있는 5번 칸 자리에 그림이 있습니다: " + blank + "픽셀");
+		check(off == 0, "인벤토리 HUD 를 껐는데 0번 칸 자리에 그림이 남아 있습니다: " + off + "픽셀");
+		check(sample > 0, "편집 화면에 인벤토리 HUD 의 예시 아이템이 보이지 않습니다");
+		check(sampleBlank == 0, "편집 화면에서 예시가 없는 5번 칸 자리에 그림이 있습니다: " + sampleBlank + "픽셀");
+
+		// 켜짐 상태, 크기, 위치가 저장되고 다시 읽힌다.
+		context.runOnClient(minecraft -> {
+			Modules.INVENTORY.scale.set(1.5);
+			Modules.INVENTORY.setPosition(minecraft, 100, 50, 400, 200);
+			ConfigManager.save();
+
+			Modules.INVENTORY.setEnabled(false);
+			Modules.INVENTORY.scale.reset();
+			Modules.INVENTORY.resetPosition();
+			ConfigManager.load();
+		});
+		check(Modules.INVENTORY.isEnabled(), "저장한 인벤토리 HUD 켜짐 상태를 다시 읽지 못했습니다");
+		check(exactly(Modules.INVENTORY.scale.get(), 1.5), "저장한 인벤토리 HUD 크기를 다시 읽지 못했습니다: " + Modules.INVENTORY.scale.get());
+		int[] saved = context.computeOnClient(minecraft -> new int[] {Modules.INVENTORY.x(minecraft, 400), Modules.INVENTORY.y(minecraft, 200)});
+		check(Math.abs(saved[0] - 100) <= 1 && Math.abs(saved[1] - 50) <= 1, "저장한 인벤토리 HUD 위치를 다시 읽지 못했습니다: " + saved[0] + ", " + saved[1]);
+
+		// 인벤토리는 위에서 이미 비웠다. 나머지를 기본 상태로 되돌리고, 그 상태를 설정 파일에도 남긴다.
+		context.runOnClient(minecraft -> {
+			Modules.INVENTORY.scale.reset();
+			Modules.INVENTORY.resetPosition();
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(defaultHudEnabled(element));
+			}
+
+			minecraft.options.particles().set(particles);
+			ConfigManager.save();
+		});
+		server.runCommand("effect clear @a minecraft:blindness");
+		context.waitTicks(40);
+	}
+
+	/** 인벤토리 HUD(크기 100%)의 index 번째 칸에 아이템이 그려지는 자리를 스크린샷 픽셀로 돌려준다 (왼쪽, 위, 한 변의 길이). */
+	private static int[] inventorySlotArea(ClientGameTestContext context, int index) {
+		int[] position = position(context, Modules.INVENTORY);
+		int scale = context.computeOnClient(minecraft -> (int) minecraft.getWindow().getGuiScale());
+		return new int[] {(position[0] + InventoryHud.slotX(index)) * scale, (position[1] + InventoryHud.slotY(index)) * scale, 16 * scale};
 	}
 
 	private static void testConfig(ClientGameTestContext context) {
