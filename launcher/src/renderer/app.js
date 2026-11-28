@@ -199,20 +199,24 @@ function renderUpdate(update) {
   };
   $('#update-status').textContent = statusTexts[update.status] || update.message || `현재 버전 ${version}`;
 
-  // 사이드바 알림: 새 버전을 받고 있거나, 받아 뒀거나, 직접 받아야 할 때만 보인다.
+  // 사이드바 알림: 새 버전을 받고 있거나, 받아 뒀거나, 곧 설치하려고 다시 시작하거나, 직접 받아야 할 때만 보인다.
   const box = $('#update-box');
   const action = $('#update-action');
   const showProgress = update.status === 'downloading';
-  box.hidden = !['downloading', 'ready', 'available'].includes(update.status);
+  box.hidden = !['downloading', 'ready', 'installing', 'available'].includes(update.status);
   $('#update-progress').hidden = !showProgress;
-  action.hidden = showProgress;
+  // 런처가 스스로 다시 시작하는 중에는 누를 것이 없다.
+  action.hidden = showProgress || update.status === 'installing';
 
   if (update.status === 'downloading') {
     $('#update-text').textContent = `새 버전 ${update.version} 받는 중 ${update.percent || 0}%`;
     $('#update-progress-fill').style.width = `${update.percent || 0}%`;
   } else if (update.status === 'ready') {
-    $('#update-text').textContent = `새 버전 ${update.version} 준비 완료`;
+    $('#update-text').textContent =
+      update.auto === 'waiting' ? `새 버전 ${update.version} 준비 완료 (하던 일이 끝나면 자동으로 설치)` : `새 버전 ${update.version} 준비 완료`;
     action.textContent = '재시작해서 설치';
+  } else if (update.status === 'installing') {
+    $('#update-text').textContent = `새 버전 ${update.version} 설치 중... 곧 다시 시작합니다`;
   } else if (update.status === 'available') {
     $('#update-text').textContent = `새 버전 ${update.version} 이 나왔습니다`;
     action.textContent = '받으러 가기';

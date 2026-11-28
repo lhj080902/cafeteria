@@ -11,6 +11,7 @@ const { LauncherError } = require('./errors');
 const { quickStatus } = require('./game-files');
 const http = require('./http');
 const importer = require('./importer');
+const { createInFlight } = require('./in-flight');
 const installer = require('./installer');
 const { openLoginWindow } = require('./login-window');
 const { installMod } = require('./mod-installer');
@@ -20,7 +21,7 @@ const { isOfficialLauncherRunning, launchOfficialLauncher } = require('./officia
 const paths = require('./paths');
 const { playDirect, repairDirect } = require('./play-direct');
 const { SettingsStore } = require('./settings');
-const { UpdateManager } = require('./updater');
+const { UpdateManager, createAttemptStore } = require('./updater');
 const curseforge = require('./sources/curseforge');
 const modrinth = require('./sources/modrinth');
 
@@ -62,6 +63,15 @@ let identifyingMods = false;
 let modUpdates = { updates: [], checked: 0, unknown: [], notes: [], checkedAt: null };
 /** 진행 중인 업데이트 확인. 동시에 두 번 확인하지 않는다. */
 let modUpdateCheck = null;
+/**
+ * 화면이 보낸 요청 가운데 아직 처리 중인 것. 요청이 하나 끝날 때마다 런처가 한가해졌는지,
+ * 자동 업데이트 설정이 바뀌었는지 볼 수 있게 받아 둔 런처 업데이트를 다시 판단한다. updates 는 앱이 준비된 뒤에 만들어진다.
+ */
+const inFlight = createInFlight(() => {
+  if (updates) {
+    updates.reconsider();
+  }
+});
 
 function gameDir() {
   return settings.get('gameDir') || paths.defaultGameDir();
@@ -94,6 +104,8 @@ function trackGame(child) {
     if (game === child) {
       game = null;
       send('game', { running: false, exitCode: code });
+      // 런처를 켜 둔 채 게임을 하다 껐으면 이제 한가하다. 받아 둔 런처 업데이트를 설치해도 되는지 다시 판단한다.
+      updates.reconsider();
     }
   });
 }
@@ -104,6 +116,8 @@ const isGameRunning = () => game !== null;
 /**
  * 자동 업데이트 관리자를 만든다. 설치 파일로 설치한 Windows 런처에서만 스스로 설치까지 하고,
  * 압축본으로 실행 중이면 새 버전이 있다는 것만 알려 준다.
+ * 다 받은 업데이트는 자동 업데이트가 켜져 있고 런처가 하는 일이 없을 때(처리 중인 요청, 플레이 준비, 로그인, 켜져 있는 게임이 없을 때)
+ * 스스로 다시 시작해서 설치한다.
  */
 function createUpdateManager() {
   const supported = app.isPackaged && process.platform === 'win32';
@@ -118,6 +132,9 @@ function createUpdateManager() {
       ? '압축본으로 실행 중이라 자동으로 설치할 수 없습니다. 새 설치 파일을 받아 주세요.'
       : '설치 파일로 설치한 Windows 런처에서만 자동 업데이트를 지원합니다.',
     onChange: (state) => send('update', state),
+    autoInstall: () => settings.get('autoUpdate'),
+    isBusy: () => inFlight.active() > 0 || playing || loggingIn || game !== null,
+    attempts: createAttemptStore(path.join(app.getPath('userData'), 'update-state.json')),
   });
 }
 
@@ -266,7 +283,7 @@ function handle(channel, handler) {
     }
 
     try {
-      return { ok: true, data: await handler(...args) };
+      return { ok: true, data: await inFlight.run(() => handler(...args)) };
     } catch (error) {
       if (error instanceof LauncherError) {
         // 로그인 창을 닫은 것은 사용자가 고른 일이라 남기지 않는다.
