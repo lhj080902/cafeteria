@@ -36,6 +36,8 @@ import net.minecraft.client.renderer.FogRenderer;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.util.Mth;
@@ -921,6 +923,20 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 		server.runCommand("item replace entity @a weapon.mainhand with minecraft:air");
 		context.runOnClient(minecraft -> Modules.COORDINATES.setEnabled(false));
 		context.waitTicks(5);
+
+		// 속도·힘 효과에서 나온 입자는 내 주변 아무 데나 떠서 길면 40틱을 살기 때문에, 그대로 두면 뒤에서 화면을 재는 검사에 걸린다.
+		// 클라이언트는 서버가 보내 준 "입자를 낼 효과" 목록이 빌 때까지 입자를 새로 만드므로, 먼저 효과를 지운 것이 여기까지 닿기를 기다린다.
+		context.waitFor(minecraft -> {
+			List<SynchedEntityData.DataValue<?>> changed = minecraft.player.getEntityData().getNonDefaultValues();
+			return changed == null || changed.stream().noneMatch(value -> value.serializer() == EntityDataSerializers.PARTICLES);
+		});
+		// 이미 떠 있는 입자는 같은 월드를 다시 넣어서 없앤다. 입자 엔진은 이때 입자 목록만 비운다.
+		int particles = context.computeOnClient(minecraft -> {
+			int count = Integer.parseInt(minecraft.particleEngine.countParticles());
+			minecraft.particleEngine.setLevel(minecraft.level);
+			return count;
+		});
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 효과를 지운 뒤에도 떠 있던 입자 {}개를 없앴습니다", particles);
 	}
 
 	/**
