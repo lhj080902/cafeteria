@@ -137,5 +137,14 @@
 	"cafeteria.module.inventory": "Inventory",
 	"cafeteria.module.inventory.desc": "Shows the 27 inventory slots (no hotbar)",
 	"cafeteria.module.container_preview": "Container Preview",
-	"cafeteria.module.container_preview.desc": "Hold Shift to see what a shulker box holds"
+	"cafeteria.module.container_preview.desc": "Hold Shift to see what a shulker box holds",
+	"cafeteria.module.health_bar": "Health Bar",
+	"cafeteria.module.health_bar.desc": "Health, name and armor above other players",
+	"cafeteria.setting.health_bar_target": "Targets",
+	"cafeteria.setting.health_bar_name": "Name",
+	"cafeteria.setting.health_bar_number": "Health number",
+	"cafeteria.setting.health_bar_armor": "Armor",
+	"cafeteria.setting.health_bar_scale": "Size",
+	"cafeteria.setting.health_bar_offset": "Height offset",
+	"cafeteria.setting.health_bar_distance": "Distance"
 }

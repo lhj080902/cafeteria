@@ -19,6 +19,7 @@ import io.github.lhj080902.cafeteria.module.ChatTimeModule;
 import io.github.lhj080902.cafeteria.module.ContainerPreviewModule;
 import io.github.lhj080902.cafeteria.module.FreelookModule;
 import io.github.lhj080902.cafeteria.module.FullbrightModule;
+import io.github.lhj080902.cafeteria.module.HealthBarModule;
 import io.github.lhj080902.cafeteria.module.HitboxModule;
 import io.github.lhj080902.cafeteria.module.InfiniteChatModule;
 import io.github.lhj080902.cafeteria.module.LowFireModule;
@@ -56,6 +57,7 @@ public final class Modules {
 	public static final InfiniteChatModule INFINITE_CHAT = new InfiniteChatModule();
 	public static final ScreenshotModule SCREENSHOT = new ScreenshotModule();
 	public static final ContainerPreviewModule CONTAINER_PREVIEW = new ContainerPreviewModule();
+	public static final HealthBarModule HEALTH_BAR = new HealthBarModule();
 
 	public static final FpsHud FPS = new FpsHud(LEFT, LEFT_TOP);
 	public static final CpsHud CPS = new CpsHud(LEFT, LEFT_TOP + ROW);
@@ -74,7 +76,7 @@ public final class Modules {
 	public static final ChatHud CHAT = new ChatHud();
 
 	/** 설정 화면의 "기능" 묶음. */
-	public static final List<Module> FEATURES = List.of(FREELOOK, ZOOM, HITBOX, FULLBRIGHT, LOW_FIRE, NO_FOG, NO_TUTORIAL, MENU_BACKGROUND, CHAT_TIME, INFINITE_CHAT, SCREENSHOT, CONTAINER_PREVIEW);
+	public static final List<Module> FEATURES = List.of(FREELOOK, ZOOM, HITBOX, FULLBRIGHT, LOW_FIRE, NO_FOG, NO_TUTORIAL, MENU_BACKGROUND, CHAT_TIME, INFINITE_CHAT, SCREENSHOT, CONTAINER_PREVIEW, HEALTH_BAR);
 	/** 설정 화면의 "HUD" 묶음이자 화면에 그리는 순서. */
 	public static final List<HudElement> HUD = List.of(FPS, CPS, PING, COORDINATES, KEYSTROKES, ARMOR, POTIONS, COMBO, REACH, INVENTORY, TITLE, SCOREBOARD, BOSSBAR, CHAT);
 	public static final List<Module> ALL;

@@ -1,5 +1,6 @@
 package io.github.lhj080902.cafeteria.test;
 
+import com.mojang.authlib.GameProfile;
 import io.github.lhj080902.cafeteria.CafeteriaClient;
 import io.github.lhj080902.cafeteria.Modules;
 import io.github.lhj080902.cafeteria.config.ConfigManager;
@@ -12,8 +13,10 @@ import io.github.lhj080902.cafeteria.hud.CombatTracker;
 import io.github.lhj080902.cafeteria.hud.HudElement;
 import io.github.lhj080902.cafeteria.hud.InventoryHud;
 import io.github.lhj080902.cafeteria.module.ContainerPreviewModule;
+import io.github.lhj080902.cafeteria.module.HealthBarModule;
 import io.github.lhj080902.cafeteria.module.NoFogModule;
 import io.github.lhj080902.cafeteria.module.ScreenshotModule;
+import io.github.lhj080902.cafeteria.render.HealthBarRenderer;
 import io.github.lhj080902.cafeteria.util.ScreenshotClipboard;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
@@ -23,6 +26,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.Camera;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.GuiMessage;
 import net.minecraft.client.KeyMapping;
@@ -31,6 +35,7 @@ import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.client.player.RemotePlayer;
 import net.minecraft.client.renderer.FogParameters;
 import net.minecraft.client.renderer.FogRenderer;
 import net.minecraft.core.Holder;
@@ -44,6 +49,10 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.Unit;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.npc.Villager;
 import net.minecraft.world.inventory.tooltip.BundleTooltip;
 import net.minecraft.world.inventory.tooltip.TooltipComponent;
 import net.minecraft.world.item.Item;
@@ -54,6 +63,7 @@ import net.minecraft.world.item.component.BundleContents;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.item.component.SeededContainerLoot;
 import net.minecraft.world.level.storage.loot.BuiltInLootTables;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 
@@ -69,8 +79,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -129,6 +141,7 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 			testNoFog(context, input, server, world.getClientWorld());
 			testInventoryHud(context, server);
 			testContainerPreview(context, input, server);
+			testHealthBar(context, input, server);
 			testConfig(context);
 		}
 
@@ -2835,6 +2848,436 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	/** 렌더 스레드에서 만든 툴팁 글자 줄 수. */
 	private static int tooltipLineCount(ClientGameTestContext context, ItemStack stack) {
 		return context.computeOnClient(minecraft -> stack.getTooltipLines(Item.TooltipContext.EMPTY, null, TooltipFlag.NORMAL).size());
+	}
+
+	/**
+	 * 체력바: 대상의 머리 위 기준점을 화면 좌표로 옮겨 HUD 단계에서 그린다.
+	 * 그려진 자리는 렌더러가 알려 주는 값(lastDrawn)으로 찾고, 실제 그림은 그 자리의 스크린샷 픽셀 색으로 본다.
+	 * 스크린샷은 찍을 때 한 프레임을 새로 그리므로, 찍은 직후의 lastDrawn 이 바로 그 그림에 그려진 자리다.
+	 * 검사 처음에 세워 둔 주민을 쓴다. 플레이어는 블록 한가운데에서 남쪽을 보고 주민은 정확히 남쪽 3칸에 둔 채로 검사하고, 끝나면 둘 다 되돌린다.
+	 */
+	private static void testHealthBar(ClientGameTestContext context, TestInput input, TestServerContext server) {
+		// 기본값은 새로 만든 모듈에서 본다.
+		HealthBarModule fresh = new HealthBarModule();
+		check(!fresh.isEnabled() && fresh.target.is("players"), "체력바는 기본으로 꺼져 있고 대상은 플레이어여야 합니다");
+		check(!Modules.HEALTH_BAR.isEnabled() && Modules.HEALTH_BAR.target.is("players"), "앞 검사가 체력바를 기본 상태가 아닌 채로 두고 끝났습니다");
+
+		double[] playerHome = context.computeOnClient(minecraft -> new double[] {
+			minecraft.player.getX(), minecraft.player.getY(), minecraft.player.getZ(), minecraft.player.getYRot(), minecraft.player.getXRot()
+		});
+		int villagerId = context.computeOnClient(minecraft -> nearestVillager(minecraft).getId());
+		double[] villagerHome = context.computeOnClient(minecraft -> {
+			Entity villager = minecraft.level.getEntity(villagerId);
+			return new double[] {villager.getX(), villager.getY(), villager.getZ()};
+		});
+		server.runCommand("execute as @a at @s align xz run tp @s ~0.5 ~ ~0.5 0 5");
+		villagerCommand(server, "tp %s ~ ~ ~3");
+
+		// 앞의 전투 검사가 주민을 때려 두었으면 체력을 채워 놓고 시작한다 (이미 가득일 때 보내면 실패 문구만 서버 로그에 남는다).
+		if (context.computeOnClient(minecraft -> entityHealth(minecraft, villagerId)) < 20.0F) {
+			villagerCommand(server, "data merge entity %s {Health:20f}");
+		}
+
+		// 다른 HUD 와 알림을 치우고, 주민이 옮긴 자리에 다 올 때까지 기다린다.
+		context.runOnClient(minecraft -> {
+			minecraft.getToastManager().clear();
+			Modules.HUD.forEach(element -> element.setEnabled(false));
+		});
+		context.waitTicks(10);
+		check(context.computeOnClient(minecraft -> entityHealth(minecraft, villagerId)) == 20.0F, "주민의 체력을 채우지 못해 비교할 수 없습니다");
+
+		// 꺼져 있으면 아무것도 그리지 않고, 켜도 대상이 플레이어인 동안에는 주민에게 뜨지 않는다.
+		check(healthBars(context).isEmpty(), "체력바가 꺼져 있는데 그려졌습니다: " + healthBars(context));
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.setEnabled(true));
+		context.waitTicks(5);
+		check(healthBar(context, villagerId) == null, "대상이 플레이어인데 주민에게 체력바가 떴습니다");
+
+		// 대상을 생물로 바꾸면 주민에게 뜬다. 체력이 가득이라 바가 오른쪽 끝까지 초록이다.
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.target.set("living"));
+		context.waitTicks(5);
+		BufferedImage fullShot = readImage(context.takeScreenshot("health-bar"));
+		HealthBarRenderer.Drawn full = healthBar(context, villagerId);
+		check(full != null, "대상을 생물로 바꿨는데 주민의 체력바가 그려지지 않았습니다");
+		int[] fullFill = colorAt(context, fullShot, fillCenterX(full), barCenterY(full));
+		int[] fullEnd = colorAt(context, fullShot, full.barRight() - 2, barCenterY(full));
+		check(exactly(full.fill(), 1.0), "체력이 가득인데 채운 비율이 1 이 아닙니다: " + full.fill());
+		check(isGreen(fullFill) && isGreen(fullEnd), "체력이 가득인 체력바가 초록이 아닙니다: 채운 쪽 가운데 " + Arrays.toString(fullFill) + ", 오른쪽 끝 " + Arrays.toString(fullEnd));
+
+		checkHealthBarPlacement(context, input, server, villagerId);
+
+		// 체력을 깎으면(20 → 4) 채운 폭이 줄고 빨강이 된다. 가득일 때 초록이던 오른쪽 끝은 빈 바탕이 된다.
+		villagerCommand(server, "damage %s 16");
+		context.waitTicks(10);
+		BufferedImage lowShot = readImage(context.takeScreenshot("health-bar-low"));
+		HealthBarRenderer.Drawn low = healthBar(context, villagerId);
+		check(low != null, "체력을 깎은 주민의 체력바가 그려지지 않았습니다");
+		int[] lowFill = colorAt(context, lowShot, fillCenterX(low), barCenterY(low));
+		int[] lowEnd = colorAt(context, lowShot, low.barRight() - 2, barCenterY(low));
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 체력바 — 가득: {} 채운 쪽 {} 오른쪽 끝 {} / 깎은 뒤: {} 채운 쪽 {} 오른쪽 끝 {}",
+			full, Arrays.toString(fullFill), Arrays.toString(fullEnd), low, Arrays.toString(lowFill), Arrays.toString(lowEnd));
+		check(Math.abs(low.fill() - 0.2) <= 0.05, "체력이 4/20 인데 채운 비율이 0.2 가 아닙니다: " + low.fill());
+		check(isRed(lowFill), "체력이 적은 체력바의 채운 쪽이 빨강이 아닙니다: " + Arrays.toString(lowFill));
+		check(!isGreen(lowEnd) && !isRed(lowEnd), "체력이 적은데 바의 오른쪽 끝까지 채워져 있습니다: " + Arrays.toString(lowEnd));
+
+		checkHealthBarOverTitle(context, server, villagerId);
+		checkHealthBarVisibility(context, server, villagerId);
+		checkHealthBarPlayer(context, villagerId);
+
+		// 모듈을 끄면 그리지 않는다. 끄기 직전에는 주민에게 떠 있다.
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.target.set("living"));
+		context.waitTicks(5);
+		check(healthBar(context, villagerId) != null, "대상을 다시 생물로 바꿨는데 주민의 체력바가 그려지지 않습니다");
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.setEnabled(false));
+		context.waitTicks(3);
+		check(healthBars(context).isEmpty(), "체력바를 껐는데 그려졌습니다: " + healthBars(context));
+
+		// 주민의 체력과 자리, 플레이어의 자리와 고개, 설정, HUD 를 원래대로 돌려놓는다.
+		villagerCommand(server, "data merge entity %s {Health:20f}");
+		villagerCommand(server, String.format(Locale.ROOT, "tp %%s %.6f %.6f %.6f", villagerHome[0], villagerHome[1], villagerHome[2]));
+		server.runCommand(String.format(Locale.ROOT, "tp @a %.6f %.6f %.6f %.3f %.3f", playerHome[0], playerHome[1], playerHome[2], playerHome[3], playerHome[4]));
+		context.runOnClient(minecraft -> {
+			Modules.HEALTH_BAR.resetSettings();
+
+			for (HudElement element : Modules.HUD) {
+				element.setEnabled(defaultHudEnabled(element));
+			}
+		});
+		context.waitTicks(10);
+	}
+
+	/**
+	 * 체력바가 머리 위 기준점에 놓이는지. 기대 좌표는 그리는 코드를 부르지 않고 카메라 방향과 시야각으로 따로 구한다.
+	 * 배경을 끄면 전체 사각형의 위쪽이 곧 이름 줄의 위쪽(기준점)이다. 줌으로 시야각이 바뀐 상태에서도 한 번 더 본다.
+	 */
+	private static void checkHealthBarPlacement(ClientGameTestContext context, TestInput input, TestServerContext server, int villagerId) {
+		check(Modules.HEALTH_BAR.showName.get(), "체력바의 이름 줄은 기본으로 켜져 있어야 합니다");
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.background.set(false));
+		context.waitTicks(3);
+		double middle = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScaledWidth()) / 2.0;
+		double[] expected = expectedHealthBarPoint(context, villagerId, 1.0);
+		HealthBarRenderer.Drawn plain = healthBar(context, villagerId);
+		check(plain != null, "배경을 끈 체력바가 그려지지 않았습니다");
+
+		// 줌을 하면 보이는 범위가 좁아진다. 줌을 해도 기준점이 화면 안에 남도록 고개를 기준점보다 3도 아래까지 든다.
+		double elevation = context.computeOnClient(minecraft -> {
+			Entity villager = minecraft.level.getEntity(villagerId);
+			Vec3 offset = villager.position().add(0.0, villager.getBbHeight() + 0.5, 0.0).subtract(minecraft.gameRenderer.getMainCamera().getPosition());
+			return Math.toDegrees(Math.atan2(offset.y, offset.horizontalDistance()));
+		});
+		turnPlayer(context, server, 0.0, 3.0 - elevation);
+		HealthBarRenderer.Drawn before = healthBar(context, villagerId);
+		boolean smooth = Modules.ZOOM.smooth.get();
+		context.runOnClient(minecraft -> Modules.ZOOM.smooth.set(false));
+		input.holdKey(CafeteriaClient.zoomKey);
+		context.waitTicks(5);
+		double factor = zoomFactor(context);
+		double[] zoomedExpected = expectedHealthBarPoint(context, villagerId, factor);
+		HealthBarRenderer.Drawn zoomed = healthBar(context, villagerId);
+		input.releaseKey(CafeteriaClient.zoomKey);
+		context.waitTicks(5);
+		context.runOnClient(minecraft -> {
+			Modules.ZOOM.smooth.set(smooth);
+			Modules.HEALTH_BAR.background.reset();
+		});
+		turnPlayer(context, server, 0.0, 5.0);
+
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 체력바 자리 — 따로 계산한 기준점 {} / 그려진 것 {} — 줌 {}배: 따로 계산한 기준점 {} / 줌 전 {} / 줌 뒤 {}",
+			Arrays.toString(expected), plain, factor, Arrays.toString(zoomedExpected), before, zoomed);
+		// 주민이 정면(x 좌표가 같음)에 있으므로 기준점은 화면 가로 한가운데다.
+		check(Math.abs(expected[0] - middle) <= 1, "정면에 있는 주민의 기준점을 따로 계산했는데 화면 가운데가 아닙니다: " + Arrays.toString(expected));
+		check(Math.abs(centerX(plain) - middle) <= 2, "정면에 있는 주민의 체력바가 화면 가운데에 있지 않습니다: " + plain);
+		check(Math.abs(centerX(plain) - expected[0]) <= 2 && Math.abs(plain.top() - expected[1]) <= 3,
+			"체력바가 따로 계산한 기준점에 있지 않습니다: " + plain + " / 기대 " + Arrays.toString(expected));
+		check(near(factor, Modules.ZOOM.factor.get()), "줌이 걸리지 않아 비교할 수 없습니다: " + factor);
+		check(before != null && zoomed != null, "고개를 든 뒤 체력바가 그려지지 않았습니다: 줌 전 " + before + ", 줌 뒤 " + zoomed);
+		check(Math.abs(centerX(zoomed) - zoomedExpected[0]) <= 2 && Math.abs(zoomed.top() - zoomedExpected[1]) <= 3,
+			"줌한 화면에서 체력바가 따로 계산한 기준점에 있지 않습니다: " + zoomed + " / 기대 " + Arrays.toString(zoomedExpected));
+		check(Math.abs(zoomed.top() - before.top()) > 10, "줌을 해도 체력바의 자리가 그대로입니다: " + before.top() + " → " + zoomed.top());
+	}
+
+	/**
+	 * 엔티티의 체력바 기준점(키보다 0.5칸 위)이 화면의 어디에 오는지를 그리는 코드와 따로 구한다 (GUI 좌표 x, y).
+	 * 카메라의 방향 벡터와 시야각만 쓴다. zoom 은 줌 배율(없으면 1). 가만히 서 있을 때만 맞는다 (걷는 흔들림과 달리기 시야각 보정은 넣지 않았다).
+	 */
+	private static double[] expectedHealthBarPoint(ClientGameTestContext context, int entityId, double zoom) {
+		return context.computeOnClient(minecraft -> {
+			Entity entity = minecraft.level.getEntity(entityId);
+			Camera camera = minecraft.gameRenderer.getMainCamera();
+			Vec3 offset = entity.position().add(0.0, entity.getBbHeight() + 0.5, 0.0).subtract(camera.getPosition());
+			double depth = offset.dot(new Vec3(camera.getLookVector()));
+			double up = offset.dot(new Vec3(camera.getUpVector()));
+			double right = -offset.dot(new Vec3(camera.getLeftVector()));
+			double tangent = Math.tan(Math.toRadians(minecraft.options.fov().get() / zoom) / 2.0);
+			double aspect = (double) minecraft.getWindow().getWidth() / minecraft.getWindow().getHeight();
+			double width = minecraft.getWindow().getGuiScaledWidth();
+			double height = minecraft.getWindow().getGuiScaledHeight();
+			return new double[] {width / 2.0 + right / (depth * tangent * aspect) * width / 2.0, height / 2.0 - up / (depth * tangent) * height / 2.0};
+		});
+	}
+
+	/**
+	 * 칭호보다 앞: 주민에게 보이는 이름표를 주고, 카메라와 주민 머리 위 사이에 불투명한 자홍색 글자 표시 엔티티를 세워 체력바 자리를 덮는다.
+	 * 월드 안에 그린 것은 그 뒤에 가려지지만, 체력바는 HUD 단계에서 그리므로 그대로 보여야 한다.
+	 * 표시 항목을 끄면 전체 폭이 줄어드는 것도 여기서 본다. 이름이 체력 줄보다 넓어야 이름을 껐을 때 폭이 주는데, 여기서 붙이는 이름표가 그만큼 길다.
+	 */
+	private static void checkHealthBarOverTitle(ClientGameTestContext context, TestServerContext server, int villagerId) {
+		villagerCommand(server, "data merge entity %s {CustomName:'\"체력바 검사용으로 붙인 긴 칭호\"',CustomNameVisible:1b}");
+		// 글자 표시는 놓은 자리에서 위쪽으로 그려진다 (3배 크기의 한 줄은 폭 1.9칸, 높이 0.75칸).
+		// 카메라에서 1.5칸 앞, 체력바를 보는 시선 위에 그 가운데가 오게 둔다. 글자도 배경과 같은 색이라 전체가 한 가지 색이다.
+		server.runCommand("execute as @a at @s run summon minecraft:text_display ~ ~1.54 ~1.5 {billboard:\"center\",background:-65281,brightness:{sky:15,block:15},"
+			+ "text:'{\"text\":\"MMMM\",\"color\":\"#FF00FF\"}',transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],translation:[0f,0f,0f],scale:[3f,3f,3f]}}");
+		context.waitTicks(10);
+		BufferedImage covered = readImage(context.takeScreenshot("health-bar-over-title"));
+		HealthBarRenderer.Drawn titled = healthBar(context, villagerId);
+		check(titled != null, "이름표를 붙인 주민의 체력바가 그려지지 않았습니다");
+		int[] fill = colorAt(context, covered, fillCenterX(titled), barCenterY(titled));
+		int[] above = colorAt(context, covered, centerX(titled), titled.top() - 4);
+
+		// 체력바를 끄면 같은 자리에 글자 표시가 보인다 (글자 표시가 체력바 자리를 실제로 덮고 있었다는 확인).
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.setEnabled(false));
+		context.waitTicks(3);
+		int[] uncovered = colorAt(context, readImage(context.takeScreenshot("health-bar-title-only")), fillCenterX(titled), barCenterY(titled));
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.setEnabled(true));
+		context.waitTicks(5);
+
+		// 이름, 체력 수치, 방어도를 차례로 끄면 그때마다 전체 폭이 줄어든다.
+		float all = healthBarWidth(context, villagerId);
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.showName.set(false));
+		context.waitTicks(3);
+		float withoutName = healthBarWidth(context, villagerId);
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.showNumber.set(false));
+		context.waitTicks(3);
+		float withoutNumber = healthBarWidth(context, villagerId);
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.showArmor.set(false));
+		context.waitTicks(3);
+		float withoutArmor = healthBarWidth(context, villagerId);
+
+		context.runOnClient(minecraft -> {
+			Modules.HEALTH_BAR.showName.reset();
+			Modules.HEALTH_BAR.showNumber.reset();
+			Modules.HEALTH_BAR.showArmor.reset();
+		});
+		server.runCommand("kill @e[type=minecraft:text_display]");
+		villagerCommand(server, "data remove entity %s CustomName");
+		villagerCommand(server, "data merge entity %s {CustomNameVisible:0b}");
+		context.waitTicks(10);
+
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 칭호 앞의 체력바 — {} 채운 쪽 {} 사각형 위 {} / 체력바를 끄면 채운 쪽 자리 {} / 전체 폭: 모두 켬 {}, 이름 끔 {}, 수치도 끔 {}, 방어도도 끔 {}",
+			titled, Arrays.toString(fill), Arrays.toString(above), Arrays.toString(uncovered), all, withoutName, withoutNumber, withoutArmor);
+		check(isMagenta(above), "글자 표시 엔티티가 체력바 자리를 덮고 있지 않아 비교할 수 없습니다 (사각형 바로 위): " + Arrays.toString(above));
+		check(isMagenta(uncovered), "글자 표시 엔티티가 체력바 자리를 덮고 있지 않아 비교할 수 없습니다 (체력바를 껐을 때): " + Arrays.toString(uncovered));
+		check(isRed(fill), "체력바가 글자 표시 엔티티에 가려졌습니다: " + Arrays.toString(fill));
+		check(withoutName < all - 1, "이름을 꺼도 체력바의 전체 폭이 줄지 않습니다: " + all + " → " + withoutName);
+		check(withoutNumber < withoutName - 1, "체력 수치를 꺼도 체력바의 전체 폭이 줄지 않습니다: " + withoutName + " → " + withoutNumber);
+		check(withoutArmor < withoutNumber - 1, "방어도를 꺼도 체력바의 전체 폭이 줄지 않습니다: " + withoutNumber + " → " + withoutArmor);
+	}
+
+	/**
+	 * 체력바를 띄우지 않는 조건: 벽 뒤, 투명화, 카메라 뒤, 표시 거리 밖. 조건이 풀리면 다시 뜬다.
+	 * 대상이 카메라와 같은 자리에 있어도 죽지 않아야 한다.
+	 */
+	private static void checkHealthBarVisibility(ClientGameTestContext context, TestServerContext server, int villagerId) {
+		// 벽: 플레이어와 주민 사이(1.5~2.5칸 앞)에 눈 높이와 머리 위를 모두 가리는 돌 벽. 둘 다 블록 한가운데에 서 있어서 벽에 끼지 않는다.
+		String wall = "execute as @a at @s run fill ~-1 ~1 ~2 ~1 ~3 ~2 minecraft:";
+		server.runCommand(wall + "stone");
+		context.waitTicks(10);
+		boolean behindWall = healthBar(context, villagerId) != null;
+		server.runCommand(wall + "air");
+		context.waitTicks(10);
+		check(!behindWall, "벽 뒤에 있는 주민에게 체력바가 떴습니다");
+		check(healthBar(context, villagerId) != null, "벽을 치웠는데 체력바가 다시 뜨지 않습니다");
+
+		villagerCommand(server, "effect give %s minecraft:invisibility 30 0 true");
+		context.waitTicks(10);
+		boolean invisible = healthBar(context, villagerId) != null;
+		villagerCommand(server, "effect clear %s minecraft:invisibility");
+		context.waitTicks(10);
+		check(!invisible, "투명해진 주민에게 체력바가 떴습니다");
+		check(healthBar(context, villagerId) != null, "투명화가 풀렸는데 체력바가 다시 뜨지 않습니다");
+
+		// 등 뒤에 있는 대상은 그리지 않는다 (그대로 계산하면 화면 반대편에 뒤집혀 나온다).
+		turnPlayer(context, server, 180.0, 5.0);
+		boolean behindCamera = healthBar(context, villagerId) != null;
+		turnPlayer(context, server, 0.0, 5.0);
+		check(!behindCamera, "등 뒤에 있는 주민의 체력바가 그려졌습니다");
+		check(healthBar(context, villagerId) != null, "다시 앞을 봤는데 체력바가 뜨지 않습니다");
+
+		// 주민을 플레이어와 같은 자리에 둔다. 기준점은 카메라 바로 위 0.8칸이다. 정면을 볼 때와 올려다볼 때 모두 죽지 않아야 한다 (그려지는지는 따지지 않는다).
+		villagerCommand(server, "tp %s ~ ~ ~");
+		context.waitTicks(10);
+		turnPlayer(context, server, 0.0, -90.0);
+		CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 주민을 플레이어와 같은 자리에 두고 올려다봤을 때의 체력바 {}", healthBar(context, villagerId));
+		turnPlayer(context, server, 0.0, 5.0);
+		villagerCommand(server, "tp %s ~ ~ ~3");
+		context.waitTicks(10);
+		check(healthBar(context, villagerId) != null, "주민을 다시 앞에 세웠는데 체력바가 뜨지 않습니다");
+
+		// 표시 거리 8칸: 3칸 앞에서는 뜨고 12칸 앞에서는 뜨지 않는다.
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.distance.set(8.0));
+		context.waitTicks(5);
+		boolean inRange = healthBar(context, villagerId) != null;
+		villagerCommand(server, "tp %s ~ ~ ~12");
+		context.waitTicks(10);
+		boolean outOfRange = healthBar(context, villagerId) != null;
+		villagerCommand(server, "tp %s ~ ~ ~3");
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.distance.reset());
+		context.waitTicks(10);
+		check(inRange, "표시 거리 8칸 안(3칸)에 있는 주민에게 체력바가 뜨지 않습니다");
+		check(!outOfRange, "표시 거리 8칸 밖(12칸)에 있는 주민에게 체력바가 떴습니다");
+		check(healthBar(context, villagerId) != null, "주민을 다시 3칸 앞에 세웠는데 체력바가 뜨지 않습니다");
+	}
+
+	/**
+	 * 대상이 플레이어일 때: 클라이언트에만 있는 가짜 플레이어를 세워서 체력 비율, 흡수 체력 줄, 방어도, 웅크린 상대의 32칸 제한을 확인한다.
+	 * 서버는 이 플레이어를 모른다. 어떻게 끝나든 지워서 뒤 검사에 남지 않게 한다.
+	 */
+	private static void checkHealthBarPlayer(ClientGameTestContext context, int villagerId) {
+		context.runOnClient(minecraft -> Modules.HEALTH_BAR.target.set("players"));
+		int fakeId = context.computeOnClient(minecraft -> {
+			RemotePlayer fake = new RemotePlayer(minecraft.level, new GameProfile(UUID.randomUUID(), "Tester"));
+			// 정면 4칸, 주민과 겹치지 않게 옆(서쪽)으로 1칸.
+			fake.moveTo(minecraft.player.getX() - 1.0, minecraft.player.getY(), minecraft.player.getZ() + 4.0);
+			fake.setHealth(10.0F);
+			// 흡수 체력은 최대 흡수 체력까지만 들어가는데 그 기본값이 0 이다. 바닐라에서는 흡수 효과가 이 값을 올린다.
+			fake.getAttribute(Attributes.MAX_ABSORPTION).setBaseValue(4.0);
+			fake.setAbsorptionAmount(4.0F);
+			fake.getAttribute(Attributes.ARMOR).setBaseValue(12.0);
+			minecraft.level.addEntity(fake);
+			return fake.getId();
+		});
+
+		try {
+			context.waitTicks(5);
+			BufferedImage shown = readImage(context.takeScreenshot("health-bar-player"));
+			HealthBarRenderer.Drawn bar = healthBar(context, fakeId);
+			check(bar != null, "대상이 플레이어인데 가짜 플레이어에게 체력바가 뜨지 않습니다");
+			check(healthBar(context, villagerId) == null, "대상이 플레이어인데 주민에게 체력바가 떴습니다");
+			check(Math.abs(bar.fill() - 0.5) <= 0.05, "체력이 10/20 인데 채운 비율이 0.5 가 아닙니다: " + bar.fill());
+			// 흡수 체력 줄은 바 맨 위의 한 줄(바 높이의 5분의 1)이다. 그 줄의 가운데와, 같은 가로 자리에서 바 가운데(체력을 채운 색)를 비교한다.
+			// 체력이 절반이면 채운 색도 노랑 계열이라 색 이름만으로는 가릴 수 없다. 흡수 줄이 더 밝고 파랑이 더 많다 (255, 210, 74 / 230, 194, 41).
+			double line = (bar.barBottom() - bar.barTop()) / 5.0;
+			int[] absorption = colorAt(context, shown, bar.barLeft() + 2, bar.barTop() + line / 2);
+			int[] filled = colorAt(context, shown, bar.barLeft() + 2, barCenterY(bar));
+			float withArmor = bar.right() - bar.left();
+			context.runOnClient(minecraft -> Modules.HEALTH_BAR.showArmor.set(false));
+			context.waitTicks(3);
+			float withoutArmor = healthBarWidth(context, fakeId);
+			context.runOnClient(minecraft -> Modules.HEALTH_BAR.showArmor.reset());
+			CafeteriaClient.LOGGER.info("CAFETERIA GAMETEST: 플레이어의 체력바 — {} 흡수 체력 줄 {} 그 아래 채운 쪽 {} / 전체 폭: 방어도 켬 {}, 끔 {}",
+				bar, Arrays.toString(absorption), Arrays.toString(filled), withArmor, withoutArmor);
+			check(absorption[0] > 180 && absorption[1] > 180 && absorption[2] < 140, "흡수 체력 줄이 노랑이 아닙니다: " + Arrays.toString(absorption));
+			check(absorption[2] >= filled[2] + 20, "흡수 체력 줄이 그 아래의 채운 색과 구별되지 않습니다: " + Arrays.toString(absorption) + " / " + Arrays.toString(filled));
+			check(withoutArmor < withArmor - 1, "방어도를 꺼도 플레이어 체력바의 전체 폭이 줄지 않습니다: " + withArmor + " → " + withoutArmor);
+
+			// 웅크린 상대: 바닐라가 이름표를 숨기는 32칸 밖에서는 표시 거리가 더 길어도 띄우지 않는다.
+			// 앞 20칸, 위 30칸의 공중에 둔다 (카메라에서 약 35칸). 평지 월드라 사이에 블록이 없다.
+			context.runOnClient(minecraft -> {
+				Modules.HEALTH_BAR.distance.set(64.0);
+				minecraft.level.getEntity(fakeId).moveTo(minecraft.player.getX(), minecraft.player.getY() + 30.0, minecraft.player.getZ() + 20.0);
+			});
+			context.waitTicks(5);
+			HealthBarRenderer.Drawn high = healthBar(context, fakeId);
+			context.runOnClient(minecraft -> minecraft.level.getEntity(fakeId).setShiftKeyDown(true));
+			context.waitTicks(5);
+			boolean sneaking = healthBar(context, fakeId) != null;
+			context.runOnClient(minecraft -> minecraft.level.getEntity(fakeId).setShiftKeyDown(false));
+			context.waitTicks(5);
+			boolean standing = healthBar(context, fakeId) != null;
+			check(high != null, "표시 거리 64칸 안(약 35칸)에 서 있는 플레이어에게 체력바가 뜨지 않습니다");
+			// 고개를 들지 않았으므로 이 플레이어는 화면 위쪽 밖에 있다. 화면 밖의 대상은 화면 안이 아니라 화면 밖 좌표에 놓여야 한다.
+			check(high.bottom() < 0, "화면 위쪽 밖에 있는 플레이어의 체력바가 화면 안에 놓였습니다: " + high);
+			check(!sneaking, "32칸 밖에서 웅크린 플레이어에게 체력바가 떴습니다");
+			check(standing, "다시 일어선 플레이어에게 체력바가 뜨지 않습니다");
+		} finally {
+			context.runOnClient(minecraft -> {
+				minecraft.level.removeEntity(fakeId, Entity.RemovalReason.DISCARDED);
+				Modules.HEALTH_BAR.distance.reset();
+				Modules.HEALTH_BAR.showArmor.reset();
+			});
+		}
+
+		context.waitTicks(3);
+		check(context.computeOnClient(minecraft -> minecraft.level.getEntity(fakeId)) == null, "가짜 플레이어가 지워지지 않았습니다");
+	}
+
+	/** 플레이어 자리에서 명령어를 실행한다. %s 자리에는 플레이어에게 가장 가까운 주민(검사 처음에 세워 둔 것)을 가리키는 선택자가 들어간다. */
+	private static void villagerCommand(TestServerContext server, String command) {
+		server.runCommand("execute as @a at @s run " + command.replace("%s", "@e[type=minecraft:villager,limit=1,sort=nearest]"));
+	}
+
+	/** 플레이어를 제자리에서 돌려 세운다 (yaw 0 이 남쪽, pitch 는 아래쪽이 +). 화면에 반영될 때까지 기다린다. */
+	private static void turnPlayer(ClientGameTestContext context, TestServerContext server, double yaw, double pitch) {
+		server.runCommand(String.format(Locale.ROOT, "execute as @a at @s run tp @s ~ ~ ~ %.2f %.2f", yaw, pitch));
+		context.waitTicks(5);
+	}
+
+	/** 플레이어에게 가장 가까운 주민. */
+	private static Entity nearestVillager(Minecraft minecraft) {
+		Entity nearest = null;
+
+		for (Entity entity : minecraft.level.entitiesForRendering()) {
+			if (entity instanceof Villager && (nearest == null || entity.distanceToSqr(minecraft.player) < nearest.distanceToSqr(minecraft.player))) {
+				nearest = entity;
+			}
+		}
+
+		check(nearest != null, "검사 처음에 세워 둔 주민이 보이지 않습니다");
+		return nearest;
+	}
+
+	private static float entityHealth(Minecraft minecraft, int entityId) {
+		return ((LivingEntity) minecraft.level.getEntity(entityId)).getHealth();
+	}
+
+	/** 마지막으로 그린 프레임의 체력바 전부. */
+	private static List<HealthBarRenderer.Drawn> healthBars(ClientGameTestContext context) {
+		return context.computeOnClient(minecraft -> HealthBarRenderer.lastDrawn());
+	}
+
+	/** 마지막으로 그린 프레임에서 이 엔티티의 체력바. 그려지지 않았으면 null. */
+	private static HealthBarRenderer.Drawn healthBar(ClientGameTestContext context, int entityId) {
+		return healthBars(context).stream().filter(drawn -> drawn.entityId() == entityId).findFirst().orElse(null);
+	}
+
+	/** 마지막으로 그린 프레임에서 이 엔티티의 체력바 전체 폭 (GUI 좌표). */
+	private static float healthBarWidth(ClientGameTestContext context, int entityId) {
+		HealthBarRenderer.Drawn bar = healthBar(context, entityId);
+		check(bar != null, "체력바가 그려지지 않아 폭을 잴 수 없습니다");
+		return bar.right() - bar.left();
+	}
+
+	private static double centerX(HealthBarRenderer.Drawn bar) {
+		return (bar.left() + bar.right()) / 2.0;
+	}
+
+	/** 체력바에서 채워진 쪽의 가로 가운데 (GUI 좌표). */
+	private static double fillCenterX(HealthBarRenderer.Drawn bar) {
+		return bar.barLeft() + (bar.barRight() - bar.barLeft()) * bar.fill() / 2.0;
+	}
+
+	private static double barCenterY(HealthBarRenderer.Drawn bar) {
+		return (bar.barTop() + bar.barBottom()) / 2.0;
+	}
+
+	/** 스크린샷에서 GUI 좌표 (x, y) 에 있는 픽셀의 색 (빨강, 초록, 파랑). */
+	private static int[] colorAt(ClientGameTestContext context, BufferedImage image, double x, double y) {
+		double scale = context.computeOnClient(minecraft -> minecraft.getWindow().getGuiScale());
+		int rgb = image.getRGB(Mth.clamp((int) (x * scale), 0, image.getWidth() - 1), Mth.clamp((int) (y * scale), 0, image.getHeight() - 1));
+		return new int[] {rgb >> 16 & 0xFF, rgb >> 8 & 0xFF, rgb & 0xFF};
+	}
+
+	/** 초록이 빨강·파랑보다 60 이상 큰 색 (체력바의 초록 63, 210, 63). 하늘과 풀밭은 여기에 들지 않는다. */
+	private static boolean isGreen(int[] color) {
+		return color[1] >= color[0] + 60 && color[1] >= color[2] + 60;
+	}
+
+	/** 빨강이 초록·파랑보다 60 이상 큰 색 (체력바의 빨강 224, 56, 43). */
+	private static boolean isRed(int[] color) {
+		return color[0] >= color[1] + 60 && color[0] >= color[2] + 60;
+	}
+
+	private static boolean isMagenta(int[] color) {
+		return color[0] > 200 && color[2] > 200 && color[1] < 80;
 	}
 
 	private static void testConfig(ClientGameTestContext context) {

@@ -137,5 +137,14 @@
 	"cafeteria.module.inventory": "인벤토리",
 	"cafeteria.module.inventory.desc": "핫바를 뺀 인벤토리 27칸 표시",
 	"cafeteria.module.container_preview": "컨테이너 미리보기",
-	"cafeteria.module.container_preview.desc": "Shift 로 셜커 상자 속 보기"
+	"cafeteria.module.container_preview.desc": "Shift 로 셜커 상자 속 보기",
+	"cafeteria.module.health_bar": "체력바",
+	"cafeteria.module.health_bar.desc": "상대 체력·이름·방어도 표시",
+	"cafeteria.setting.health_bar_target": "대상",
+	"cafeteria.setting.health_bar_name": "이름",
+	"cafeteria.setting.health_bar_number": "체력 수치",
+	"cafeteria.setting.health_bar_armor": "방어도",
+	"cafeteria.setting.health_bar_scale": "크기",
+	"cafeteria.setting.health_bar_offset": "높이 조정",
+	"cafeteria.setting.health_bar_distance": "표시 거리"
 }

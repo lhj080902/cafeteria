@@ -8,6 +8,7 @@ import io.github.lhj080902.cafeteria.gui.ContainerPreviewTooltip;
 import io.github.lhj080902.cafeteria.hud.CombatTracker;
 import io.github.lhj080902.cafeteria.hud.HudRenderer;
 import io.github.lhj080902.cafeteria.module.Module;
+import io.github.lhj080902.cafeteria.render.HealthBarRenderer;
 import io.github.lhj080902.cafeteria.util.ScreenshotClipboard;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
@@ -18,6 +19,7 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudLayerRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.IdentifiedLayer;
 import net.fabricmc.fabric.api.client.rendering.v1.TooltipComponentCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -63,9 +65,14 @@ public class CafeteriaClient implements ClientModInitializer {
 
 			return InteractionResult.PASS;
 		});
-		// 채팅보다 위 레이어에 그려서 채팅 글자와 배경이 HUD 를 가리지 않게 한다. (Tab 플레이어 목록보다는 아래)
-		HudLayerRegistrationCallback.EVENT.register(layers -> layers.attachLayerAfter(
-			IdentifiedLayer.CHAT, ResourceLocation.fromNamespaceAndPath(MOD_ID, "hud"), (graphics, deltaTracker) -> HudRenderer.render(graphics)));
+		HudLayerRegistrationCallback.EVENT.register(layers -> {
+			// 채팅보다 위 레이어에 그려서 채팅 글자와 배경이 HUD 를 가리지 않게 한다. (Tab 플레이어 목록보다는 아래)
+			layers.attachLayerAfter(IdentifiedLayer.CHAT, ResourceLocation.fromNamespaceAndPath(MOD_ID, "hud"), (graphics, deltaTracker) -> HudRenderer.render(graphics));
+			// 체력바는 바닐라 HUD 의 맨 앞 단계보다 먼저 그린다. 월드보다는 앞이고 조준선·핫바·채팅보다는 뒤다. F1 로 HUD 를 숨기면 같이 숨는다.
+			layers.attachLayerBefore(IdentifiedLayer.MISC_OVERLAYS, ResourceLocation.fromNamespaceAndPath(MOD_ID, "health_bar"), HealthBarRenderer::render);
+		});
+		// 체력바가 머리 위 지점을 화면 좌표로 옮길 때 쓸, 그 프레임의 행렬과 카메라 위치를 받아 둔다.
+		WorldRenderEvents.END.register(HealthBarRenderer::captureFrame);
 		// 스크린샷 안내의 [복사] 버튼이 실행하는 명령어: /cafeteria screenshot copy <파일 이름>
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
 			ClientCommandManager.literal("cafeteria").then(ClientCommandManager.literal("screenshot").then(ClientCommandManager.literal("copy").then(
