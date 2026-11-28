@@ -23,11 +23,12 @@ public class InventoryHud extends HudElement {
 		super("inventory", false, anchorX, anchorY);
 	}
 
-	/** index(0~26) 번째 칸의 아이템이 그려지는 왼쪽 위 좌표 (배율 적용 전). */
+	/** index(0~26) 번째 칸의 아이템이 그려지는 자리의 왼쪽 좌표 (배율 적용 전). */
 	public static int slotX(int index) {
 		return index % COLUMNS * CELL + 1;
 	}
 
+	/** index(0~26) 번째 칸의 아이템이 그려지는 자리의 위쪽 좌표 (배율 적용 전). */
 	public static int slotY(int index) {
 		return index / COLUMNS * CELL + 1;
 	}

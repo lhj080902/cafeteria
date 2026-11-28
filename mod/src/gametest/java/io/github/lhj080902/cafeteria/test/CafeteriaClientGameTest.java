@@ -2424,9 +2424,16 @@ public class CafeteriaClientGameTest implements FabricClientGameTest {
 	 * 칸 배경은 밝은 화면에서 밝기로, 아이템 그림은 실명 효과로 화면을 검게 만든 뒤에 색으로 잰다.
 	 */
 	private static void testInventoryHud(ClientGameTestContext context, TestServerContext server) {
-		check(!Modules.INVENTORY.isEnabled(), "인벤토리 HUD 는 기본으로 꺼져 있어야 합니다");
-		server.runCommand("clear @a");
-		context.waitTicks(5);
+		// 기본값은 새로 만든 요소에서 본다. Modules.INVENTORY 는 앞 검사들이 이미 꺼 두므로 그 상태로는 기본값을 알 수 없다.
+		check(!new InventoryHud(0.0, 0.0).isEnabled(), "인벤토리 HUD 는 기본으로 꺼져 있어야 합니다");
+		check(!Modules.INVENTORY.isEnabled(), "앞 검사가 인벤토리 HUD 를 켜 둔 채로 끝났습니다");
+
+		// 앞 검사가 아이템을 남겼으면 비운다. 이미 비어 있을 때 명령어를 보내면 실패 문구만 서버 로그에 남는다.
+		if (!context.computeOnClient(minecraft -> minecraft.player.getInventory().isEmpty())) {
+			server.runCommand("clear @a");
+			context.waitTicks(5);
+		}
+
 		check(!context.computeOnClient(Modules.INVENTORY::hasContent), "인벤토리가 비어 있는데 인벤토리 HUD 가 표시됩니다");
 		checkInventoryDefaultLayout(context);
 
